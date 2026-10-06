@@ -345,7 +345,7 @@ test('keep-status publishes a clean idle activity and disabling it clears Discor
   await savePreferences(runtime, session.cookies, { ...defaultMusicPreferences, keepStatus: true })
   await linkLastfm(runtime, session.cookies)
   await eventually(() => providers.activity?.type === 0)
-  assert.deepEqual(providers.activity, { name: 'Last.fm', type: 0, details: 'DRMC', state: '1.0.0', assets: { large_image: '970027358432161832' } })
+  assert.deepEqual(providers.activity, { name: 'Last.fm', type: 0, details: 'DRMC', state: '1.0.0', assets: { large_image: '970027358432161832' }, application_id: applicationId })
   assert.equal((await account(runtime, session.cookies)).account!.status, 'idle')
   await savePreferences(runtime, session.cookies, { ...defaultMusicPreferences })
   await eventually(() => providers.activity === null)
