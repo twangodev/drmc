@@ -14,6 +14,7 @@ test('Last.fm album URLs resolve to Discord media references and are cached per 
     assert.equal(init.method, 'POST')
     assert.equal(init.redirect, 'manual')
     assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer private-token')
+    assert.match(new Headers(init.headers).get('User-Agent')!, /^DiscordBot /)
     assert.deepEqual(JSON.parse(init.body as string), { urls: [artwork] })
     return Response.json([{ url: artwork, external_asset_path: proxyPath }])
   })

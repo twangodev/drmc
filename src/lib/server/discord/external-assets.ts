@@ -15,7 +15,10 @@ export class DiscordExternalAssets {
     let status: number | undefined
     try {
       const response = await fetch(`https://discord.com/api/v9/applications/${applicationId}/external-assets`, {
-        method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        method: 'POST', headers: {
+          Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+          'User-Agent': 'DiscordBot (https://github.com/twangodev/drmc, 1.0.0)',
+        },
         body: JSON.stringify({ urls: [artwork] }), redirect: 'manual', signal: AbortSignal.timeout(8000),
       })
       status = response.status
