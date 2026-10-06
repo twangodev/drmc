@@ -1,4 +1,5 @@
 import { readDiscordOAuthError } from './oauth-errors'
+import { readDiscordRateLimit, revocationRetryDelay, type DiscordRateLimit } from './rate-limits'
 
 export const discordPresenceScopes = ['identify', 'openid', 'sdk.social_layer_presence'] as const
 
@@ -25,6 +26,7 @@ export type DiscordOperation = 'exchange' | 'inspect' | 'refresh' | 'revoke'
 export interface DiscordFailureDiagnostic {
   reason: string
   status: number | null
+  rateLimit?: DiscordRateLimit
 }
 
 type DiscordCleanupResult =
@@ -37,6 +39,7 @@ export class DiscordOAuthFailure extends Error {
     readonly status: number | null,
     readonly reason: string,
     readonly cleanup?: DiscordCleanupResult,
+    readonly rateLimit?: DiscordRateLimit,
   ) {
     super(`Discord ${operation} failed: ${reason}`)
     this.name = 'DiscordOAuthFailure'
@@ -100,6 +103,19 @@ export class DiscordOAuthClient {
   }
 
   async revoke(token: string): Promise<void> {
+    try {
+      await this.revokeGrant(token)
+    } catch (error) {
+      const delay = error instanceof DiscordOAuthFailure && error.status === 429
+        ? revocationRetryDelay(error.rateLimit)
+        : undefined
+      if (delay === undefined) throw error
+      await new Promise(resolve => setTimeout(resolve, delay))
+      await this.revokeGrant(token)
+    }
+  }
+
+  private async revokeGrant(token: string): Promise<void> {
     const response = await this.send('revoke', 'https://discord.com/api/v10/oauth2/token/revoke', {
       method: 'POST',
       headers: { Authorization: this.clientAuthentication() },
@@ -156,10 +172,13 @@ export class DiscordOAuthClient {
   }
 
   private async send(operation: DiscordOperation, url: string, init: RequestInit): Promise<Response> {
+    const headers = new Headers(init.headers)
+    headers.set('User-Agent', 'DiscordBot (https://github.com/twangodev/drmc, 1.0.0)')
     let response: Response
     try {
       response = await this.request(url, {
         ...init,
+        headers,
         redirect: 'manual',
         signal: AbortSignal.timeout(8000),
       })
@@ -167,8 +186,8 @@ export class DiscordOAuthClient {
       throw new DiscordOAuthFailure(operation, null, 'network_error')
     }
     if (!response.ok) {
-      const reason = await discordFailureReason(response)
-      throw new DiscordOAuthFailure(operation, response.status, reason)
+      const failure = await discordFailureDiagnostic(response)
+      throw new DiscordOAuthFailure(operation, failure.status, failure.reason, undefined, failure.rateLimit)
     }
     return response
   }
@@ -187,9 +206,10 @@ export class DiscordOAuthClient {
 }
 
 export function describeDiscordFailure(error: unknown): DiscordFailureDiagnostic {
-  return error instanceof DiscordOAuthFailure
-    ? { reason: error.reason, status: error.status }
-    : { reason: 'unexpected_error', status: null }
+  if (!(error instanceof DiscordOAuthFailure)) return { reason: 'unexpected_error', status: null }
+  const failure: DiscordFailureDiagnostic = { reason: error.reason, status: error.status }
+  if (error.rateLimit) failure.rateLimit = error.rateLimit
+  return failure
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -198,11 +218,16 @@ function asObject(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-async function discordFailureReason(response: Response): Promise<string> {
+async function discordFailureDiagnostic(response: Response): Promise<DiscordFailureDiagnostic & { status: number }> {
+  let body: Record<string, unknown> | null = null
   try {
-    const body = asObject(await response.json())
-    const reason = readDiscordOAuthError(body?.error)
-    if (reason) return reason
+    body = asObject(await response.json())
   } catch {}
-  return response.status === 429 ? 'rate_limited' : 'upstream_error'
+  const failure: DiscordFailureDiagnostic & { status: number } = {
+    status: response.status,
+    reason: response.status === 429 ? 'rate_limited' : readDiscordOAuthError(body?.error) ?? 'upstream_error',
+  }
+  const rateLimit = readDiscordRateLimit(response, body)
+  if (rateLimit) failure.rateLimit = rateLimit
+  return failure
 }

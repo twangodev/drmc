@@ -20,10 +20,13 @@ class DiscordFixture {
   redirectExchange = false
   malformedTokenStage: 'exchange' | 'refresh' | null = null
   requests: string[] = []
+  revokeRateLimits: { body: Record<string, unknown> | string; headers?: Record<string, string> }[] = []
+  revocationsAt: number[] = []
 
   async respond(request: MiniflareRequest): Promise<MiniflareResponse> {
     const url = new URL(request.url)
     assert.equal(url.origin, 'https://discord.com')
+    assert.equal(request.headers.get('User-Agent'), 'DiscordBot (https://github.com/twangodev/drmc, 1.0.0)')
     if (url.pathname === '/api/v10/oauth2/@me') {
       this.requests.push('inspect')
       assert.match(request.headers.get('Authorization') ?? '', /^Bearer (initial|refreshed)-access-token$/)
@@ -40,11 +43,19 @@ class DiscordFixture {
     const parameters = new URLSearchParams(await request.text())
     if (url.pathname === '/api/v10/oauth2/token/revoke') {
       this.requests.push('revoke')
+      this.revocationsAt.push(Date.now())
       assert.equal(request.headers.get('Authorization'), `Basic ${btoa(`${applicationId}:test-client-secret`)}`)
       assert.equal(parameters.get('client_id'), null)
       assert.equal(parameters.get('client_secret'), null)
       assert.match(parameters.get('token') ?? '', /^(initial|refreshed)-refresh-token$/)
       assert.equal(parameters.get('token_type_hint'), null)
+      const rateLimit = this.revokeRateLimits.shift()
+      if (rateLimit) {
+        const init = { status: 429, headers: rateLimit.headers }
+        return typeof rateLimit.body === 'string'
+          ? new MiniflareResponse(rateLimit.body, init)
+          : MiniflareResponse.json(rateLimit.body, init)
+      }
       if (this.redirectRevoke) {
         return new MiniflareResponse(null, { status: 302, headers: { Location: 'https://unexpected.test' } })
       }
@@ -369,7 +380,99 @@ test('recognized revocation failures expose only a safe diagnostic', async conte
   assert.deepEqual(body.cleanupFailure, { reason: 'invalid_client', status: 401 })
   assert.equal(JSON.stringify(body).includes('private-provider-token'), false)
   assert.equal(JSON.stringify(body).includes('PRIVATE REVOCATION'), false)
+  assert.equal(discord.revocationsAt.length, 1)
 })
+
+for (const [name, rateLimit, minimumWait] of [
+  ['header', { headers: { 'Retry-After': '0.02' }, body: {} }, 20],
+  ['body', { body: { retry_after: 0.01 } }, 10],
+  ['conflicting delays', { headers: { 'Retry-After': '0.02' }, body: { retry_after: 0.01 } }, 20],
+] as const) {
+  test(`revocation honors the ${name} wait before one successful retry`, async context => {
+    const discord = new DiscordFixture()
+    discord.revokeRateLimits = [rateLimit]
+    const { runtime } = createRuntime(context, discord)
+    const response = await callback(runtime, await beginProbe(runtime))
+    assert.equal(response.status, 200)
+    const body = await response.json() as Record<string, unknown>
+    assert.equal(body.cleanup, 'revoked')
+    assert.equal(body.cleanupFailure, undefined)
+    assert.equal(discord.revocationsAt.length, 2)
+    assert.ok(discord.revocationsAt[1]! - discord.revocationsAt[0]! >= minimumWait)
+    assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'inspect', 'revoke', 'revoke'])
+  })
+}
+
+test('a repeated revocation rate limit stops after one retry and retains the latest wait', async context => {
+  const discord = new DiscordFixture()
+  discord.revokeRateLimits = [
+    { body: { retry_after: 0.001 } },
+    { body: { retry_after: 60, global: false }, headers: { 'X-RateLimit-Scope': 'shared' } },
+  ]
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(body.oauth, 'verified')
+  assert.equal(body.cleanup, 'failed')
+  assert.deepEqual(body.cleanupFailure, {
+    reason: 'rate_limited', status: 429,
+    rateLimit: { responseFormat: 'json', retryAfterSeconds: 60, scope: 'shared', global: false },
+  })
+  assert.equal(discord.revocationsAt.length, 2)
+})
+
+test('long waits are reported without retrying or exposing arbitrary response fields', async context => {
+  const discord = new DiscordFixture()
+  discord.revokeRateLimits = [{
+    headers: { 'Retry-After': '65', 'X-RateLimit-Scope': 'global', 'X-RateLimit-Global': 'true' },
+    body: { retry_after: 64.57, message: 'PRIVATE RATE LIMIT MESSAGE', token: 'private-provider-token' },
+  }]
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.deepEqual(body.cleanupFailure, {
+    reason: 'rate_limited', status: 429,
+    rateLimit: { responseFormat: 'json', retryAfterSeconds: 65, scope: 'global', global: true },
+  })
+  assert.equal(discord.revocationsAt.length, 1)
+  assert.equal(JSON.stringify(body).includes('PRIVATE RATE LIMIT'), false)
+  assert.equal(JSON.stringify(body).includes('private-provider-token'), false)
+})
+
+test('non-JSON rate limits without a wait are diagnosed without guessing a retry interval', async context => {
+  const discord = new DiscordFixture()
+  discord.revokeRateLimits = [{ body: '<html>PRIVATE UPSTREAM BLOCK</html>' }]
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.deepEqual(body.cleanupFailure, {
+    reason: 'rate_limited', status: 429, rateLimit: { responseFormat: 'other' },
+  })
+  assert.equal(discord.revocationsAt.length, 1)
+  assert.equal(JSON.stringify(body).includes('PRIVATE UPSTREAM'), false)
+})
+
+for (const retryAfter of [-1, '0.001', null, 'private-provider-token']) {
+  test(`invalid retry delay ${retryAfter} never triggers a request or leaks metadata`, async context => {
+    const discord = new DiscordFixture()
+    discord.revokeRateLimits = [{
+      headers: { 'Retry-After': '-1', 'X-RateLimit-Scope': 'private-provider-token' },
+      body: { retry_after: retryAfter, global: 'private-provider-token' },
+    }]
+    const { runtime } = createRuntime(context, discord)
+    const response = await callback(runtime, await beginProbe(runtime))
+    assert.equal(response.status, 502)
+    const body = await response.json() as Record<string, unknown>
+    assert.deepEqual(body.cleanupFailure, {
+      reason: 'rate_limited', status: 429, rateLimit: { responseFormat: 'json' },
+    })
+    assert.equal(discord.revocationsAt.length, 1)
+    assert.equal(JSON.stringify(body).includes('private-provider-token'), false)
+  })
+}
 
 test('revocation redirects never forward the grant or client authentication', async context => {
   const discord = new DiscordFixture()

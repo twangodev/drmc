@@ -16,7 +16,7 @@ export interface ProbeReport {
   requestedScopes: readonly string[]
   authorization?: DiscordAuthorization
   refreshed?: boolean
-  failure?: { operation: DiscordOperation | 'admission'; reason: string; status: number | null }
+  failure?: DiscordFailureDiagnostic & { operation: DiscordOperation | 'admission' }
   cleanup: 'revoked' | 'failed' | 'not_obtained'
   cleanupFailure?: DiscordFailureDiagnostic
 }
@@ -52,7 +52,7 @@ export async function inspectDiscordAccess(
     report.oauth = 'verified'
   } catch (error) {
     report.failure = error instanceof DiscordOAuthFailure
-      ? { operation: error.operation, reason: error.reason, status: error.status }
+      ? { operation: error.operation, ...describeDiscordFailure(error) }
       : { operation: 'inspect', reason: 'unexpected_error', status: null }
     if (error instanceof DiscordOAuthFailure && error.cleanup) {
       report.cleanup = error.cleanup.status

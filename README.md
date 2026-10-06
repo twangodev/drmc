@@ -56,8 +56,12 @@ or expiry. No Last.fm account is linked and no music polling runs yet.
 
 If cleanup reports `failed`, remove the development application's authorization
 in Discord **User Settings → Authorized Apps**. `cleanupFailure` contains a
-sanitized error code and HTTP status for diagnosis. Also remove it if the callback
-is interrupted or an upstream token response cannot be validated. A successful
+sanitized error code and HTTP status for diagnosis. On HTTP 429 it also includes
+safe `rateLimit` metadata: response format, retry delay, scope, and global flag
+when supplied by Discord. Revocation retries once after Discord's specified wait
+if that wait is at most five seconds. Longer or unspecified waits require manual
+revocation; tokens are never persisted for a background retry. Also remove it if
+the callback is interrupted or an upstream token response cannot be validated. A successful
 probe deliberately revokes the whole grant, so use a dedicated development app.
 
 ## Checks
