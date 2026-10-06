@@ -33,7 +33,7 @@ function musicLink(value: unknown, hosts: readonly string[]): string | undefined
 }
 
 export function lastfmArtwork(value: unknown): string | undefined {
-  const url = musicLink(value, ['lastfm.freetls.fastly.net'])
+  const url = musicLink(value, ['lastfm-img.freetls.fastly.net', 'lastfm.freetls.fastly.net'])
   return url && !url.includes('2a96cbd8b46e442fc41c2b86b821562f') ? url : undefined
 }
 

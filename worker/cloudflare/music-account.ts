@@ -8,6 +8,7 @@ import { randomToken } from '../../src/lib/server/oauth/attempts'
 import { DiscordOAuthClient, DiscordOAuthFailure, discordPresenceScopes, type DiscordAuthorization, type DiscordTokens } from '../../src/lib/server/discord/oauth'
 import { openDiscordPresence, DiscordGatewayFailure, type LiveDiscordPresence } from '../../src/lib/server/discord/gateway'
 import { DiscordApplicationAssets } from '../../src/lib/server/discord/application-assets'
+import { DiscordExternalAssets } from '../../src/lib/server/discord/external-assets'
 import { musicActivity } from '../../src/lib/server/discord/music-activity'
 import { LastfmClient, LastfmFailure, type LastfmSession, type ListeningTrack } from '../../src/lib/server/lastfm/client'
 import { connectDiscordGateway } from './discord-gateway'
@@ -40,6 +41,7 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
   private live?: LiveDiscordPresence
   private queue: Promise<unknown> = Promise.resolve()
   private readonly applicationAssets = new DiscordApplicationAssets()
+  private readonly externalAssets = new DiscordExternalAssets()
   private published?: string
 
   constructor(ctx: DurableObjectState, env: ServiceSettings) {
@@ -221,7 +223,10 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
     await this.ensurePresence(accessToken)
     const applicationId = requireServiceConfiguration(this.env).discord.clientId
     const images = await this.applicationAssets.resolve(applicationId)
-    const activity = musicActivity(record.track, record.lastfmUsername!, preferences, images)!
+    const track = record.track?.artwork && preferences.showCovers
+      ? { ...record.track, artwork: await this.externalAssets.resolve(applicationId, accessToken, record.track.artwork) }
+      : record.track
+    const activity = musicActivity(track, record.lastfmUsername!, preferences, images)!
     const payload = JSON.stringify(activity)
     if (this.published === payload) return
     this.live!.update(activity)

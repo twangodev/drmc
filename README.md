@@ -126,10 +126,11 @@ Failed revocations retain encrypted credentials only for scheduled cleanup retri
 the browser session is invalidated immediately. Last.fm permissions can also be
 revoked from Last.fm settings.
 
-Album-art URLs from the official Last.fm API are sent directly in the activity,
-as in lfm-cli. [Discord proxies external images](https://docs.discord.com/developers/events/gateway-events#activity-asset-image);
-DRMC does not register or cache album images. Registered Last.fm logo and heart
-assets are cached separately, and the logo is used when no cover is available.
+Album-art URLs come from the official Last.fm API. The OAuth Gateway transport
+resolves them through Discord's external-assets endpoint into media-proxy
+references, as in the Rust transport. Resolved references are cached per account
+for an hour; DRMC does not store image files. Registered Last.fm logo and heart
+assets are cached separately, and the logo is used when no cover can be resolved.
 The Gateway transport attaches the authorized application's ID so Discord can
 resolve its registered logo and heart assets.
 

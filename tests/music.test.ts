@@ -57,6 +57,11 @@ test('API links and artwork reject foreign origins and placeholders while preser
   assert.equal(lastfmMusicLink('http://www.last.fm/music/Radiohead/_/Kid+A'), 'https://www.last.fm/music/Radiohead/_/Kid+A')
   for (const url of ['javascript:alert(1)', 'https://evil.example/music/song', 'https://www.last.fm@evil.example/music/song', 'https://www.last.fm/api/auth/']) assert.equal(lastfmMusicLink(url), undefined)
   assert.equal(lastfmArtwork('https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png'), undefined)
+  assert.equal(lastfmArtwork('https://lastfm-img.freetls.fastly.net/i/u/300x300/cover.png'), 'https://lastfm-img.freetls.fastly.net/i/u/300x300/cover.png')
+  assert.equal(lastfmArtwork('http://lastfm-img.freetls.fastly.net/i/u/300x300/cover.png'), 'https://lastfm-img.freetls.fastly.net/i/u/300x300/cover.png')
+  assert.equal(lastfmArtwork('https://lastfm-img.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png'), undefined)
+  assert.equal(lastfmArtwork('https://lastfm-img.freetls.fastly.net.evil.example/cover.png'), undefined)
+  assert.equal(lastfmArtwork('https://lastfm-img.freetls.fastly.net@evil.example/cover.png'), undefined)
   assert.equal(lastfmArtwork('https://evil.example/cover.png'), undefined)
 })
 

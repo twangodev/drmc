@@ -17,7 +17,8 @@ class Providers {
   loved = false
   lastfmUsername = 'twangodev'
   artworkRequests = 0
-  artworkUrl: string | undefined = 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png'
+  artworkFailure = false
+  artworkUrl: string | undefined = 'https://lastfm-img.freetls.fastly.net/i/u/300x300/cover.png'
   retryAfter?: string
   lastfmFailure = false
   lastfmSessionRevoked = false
@@ -69,7 +70,14 @@ class Providers {
     }
     assert.equal(url.origin, 'https://discord.com')
     if (url.pathname === `/api/v9/oauth2/applications/${applicationId}/assets`) return RuntimeResponse.json([{ id: '970027358432161832', name: 'lfm_logo' }, { id: '970173669169053717', name: 'heart' }])
-    if (url.pathname.endsWith('/external-assets')) { this.artworkRequests++; return RuntimeResponse.json({ error: 'External asset registration is unnecessary' }, { status: 503 }) }
+    if (url.pathname.endsWith('/external-assets')) {
+      this.artworkRequests++
+      assert.equal(url.pathname, `/api/v9/applications/${applicationId}/external-assets`)
+      assert.match(request.headers.get('Authorization')!, /^Bearer (initial|refreshed)-access-token$/)
+      if (this.artworkFailure) return RuntimeResponse.json({ error: 'PRIVATE ARTWORK ERROR' }, { status: 503 })
+      const { urls } = await request.json() as { urls: string[] }
+      return RuntimeResponse.json(urls.map(image => ({ url: image, external_asset_path: proxyImage(image).slice(3) })))
+    }
     if (url.pathname === '/api/v10/oauth2/@me') return RuntimeResponse.json({ application: { id: applicationId }, user: { id: userId }, scopes: ['identify', 'openid', 'sdk.social_layer_presence'], expires: new Date(this.discordExpires).toISOString() })
     const parameters = new URLSearchParams(await request.text())
     if (url.pathname.endsWith('/revoke')) {
@@ -83,6 +91,8 @@ class Providers {
     return RuntimeResponse.json({ access_token: `${refresh ? 'refreshed' : 'initial'}-access-token`, refresh_token: `${refresh ? 'refreshed' : 'initial'}-refresh-token`, token_type: 'Bearer' })
   }
 }
+
+function proxyImage(url: string): string { return `mp:external/cover/${url.replace('https://', 'https/')}` }
 
 function createRuntime(context: TestContext) {
   const providers = new Providers()
@@ -151,8 +161,8 @@ test('accounts link, publish from an alarm, pause, resume, logout without stoppi
   await eventually(() => providers.activity !== null)
   assert.equal(providers.activity!.details, 'Kid A')
   assert.equal(providers.activity!.state, 'by Radiohead')
-  assert.equal((providers.activity!.assets as { large_image: string }).large_image, providers.artworkUrl)
-  assert.equal(providers.artworkRequests, 0)
+  assert.equal((providers.activity!.assets as { large_image: string }).large_image, proxyImage(providers.artworkUrl!))
+  assert.equal(providers.artworkRequests, 1)
   const presence = (await account(runtime, signedIn.cookies)).account!.presence!
   assert.ok(presence.connectedAt)
   assert.ok(presence.lastActivitySentAt)
@@ -289,7 +299,7 @@ test('album covers follow API artwork changes and preferences without resetting 
   const preferences = { ...defaultMusicPreferences, refreshInterval: 1 }
   providers.artworkUrl = 'https://lastfm.freetls.fastly.net/i/u/300x300/another-cover.png'
   await savePreferences(runtime, session.cookies, preferences)
-  await eventually(() => largeImage() === providers.artworkUrl)
+  await eventually(() => largeImage() === proxyImage(providers.artworkUrl!))
   assert.equal((providers.activity!.timestamps as { start: number }).start, firstObservation)
   providers.artworkUrl = undefined
   await eventually(() => largeImage() === '970027358432161832')
@@ -297,9 +307,25 @@ test('album covers follow API artwork changes and preferences without resetting 
   await eventually(() => largeImage() === undefined)
   providers.artworkUrl = 'https://lastfm.freetls.fastly.net/i/u/300x300/restored-cover.png'
   await savePreferences(runtime, session.cookies, preferences)
-  await eventually(() => largeImage() === providers.artworkUrl)
+  await eventually(() => largeImage() === proxyImage(providers.artworkUrl!))
   assert.equal((providers.activity!.timestamps as { start: number }).start, firstObservation)
-  assert.equal(providers.artworkRequests, 0)
+  assert.equal(providers.artworkRequests, 3)
+  await post(runtime, '/api/account/pause', session.cookies)
+})
+
+test('an unavailable cover proxy preserves music and publishes the registered logo instead of a broken URL', async context => {
+  const { runtime, providers } = createRuntime(context)
+  providers.artworkFailure = true
+  const session = await signIn(runtime)
+  await linkLastfm(runtime, session.cookies)
+  await eventually(() => providers.activity !== null)
+  assert.equal((providers.activity!.assets as { large_image: string }).large_image, '970027358432161832')
+  assert.equal(providers.activity!.application_id, applicationId)
+  const view = (await account(runtime, session.cookies)).account!
+  assert.equal(view.status, 'listening')
+  assert.equal(view.track!.artwork, providers.artworkUrl)
+  assert.equal(view.consecutiveFailures, 0)
+  assert.equal(providers.artworkRequests, 1)
   await post(runtime, '/api/account/pause', session.cookies)
 })
 
