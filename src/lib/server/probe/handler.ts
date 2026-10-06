@@ -1,4 +1,5 @@
 import { DiscordOAuthClient } from '../discord/oauth'
+import type { DiscordPresencePublisher } from '../discord/gateway'
 import { readDiscordOAuthError } from '../discord/oauth-errors'
 import {
   authorizationLifetimeMs,
@@ -13,13 +14,14 @@ import {
   type ProbeConfiguration,
   type ProbeSettings,
 } from './configuration'
-import { inspectDiscordAccess } from './report'
+import { inspectDiscordAccess, type ProbeReport } from './report'
 import { readProbeStatus } from './status'
 
 export interface ProbeDependencies {
   attempts: AuthorizationAttemptStore
   request?: typeof fetch
   now?: () => number
+  presence?: DiscordPresencePublisher
 }
 
 class ProbeRequestFailure extends Error {
@@ -80,6 +82,8 @@ async function startProbe(
   const form = new URLSearchParams(await limitedRequestText(request, 4096))
   const suppliedKey = form.get('access_key') ?? ''
   if (!(await secretMatches(suppliedKey, configuration.accessKey))) throw new ProbeRequestFailure(403, 'invalid_access_key')
+  const experiment = form.get('experiment')
+  if (experiment !== null && experiment !== 'presence') throw new ProbeRequestFailure(400, 'invalid_experiment')
 
   const state = randomToken()
   const browserBinding = randomToken()
@@ -87,6 +91,7 @@ async function startProbe(
   await dependencies.attempts.create(state, {
     browserBindingHash: await hashToken(browserBinding),
     expiresAt: now + authorizationLifetimeMs,
+    ...(experiment === 'presence' ? { experiment } : {}),
   })
   const client = new DiscordOAuthClient(configuration.application, dependencies.request)
   return new Response(null, {
@@ -129,10 +134,16 @@ async function completeProbe(
     new DiscordOAuthClient(configuration.application, dependencies.request),
     code,
     configuration.allowedUsers,
+    consumed.experiment === 'presence' ? { publisher: dependencies.presence } : undefined,
   )
-  return Response.json(report, {
-    status: report.cleanup === 'failed' ? 502 : report.failure?.operation === 'admission' ? 403 : report.oauth === 'verified' ? 200 : 502,
-  })
+  return Response.json(report, { status: probeReportStatus(report) })
+}
+
+function probeReportStatus(report: ProbeReport): number {
+  if (report.cleanup === 'failed') return 502
+  if (report.failure?.operation === 'admission') return 403
+  if (report.publication === 'failed' || report.oauth !== 'verified') return 502
+  return 200
 }
 
 function requireCanonicalOrigin(request: Request, origin: string): void {

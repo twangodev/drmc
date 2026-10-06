@@ -3,11 +3,12 @@ export const authorizationLifetimeMs = 10 * 60 * 1000
 export interface AuthorizationAttempt {
   browserBindingHash: string
   expiresAt: number
+  experiment?: 'presence'
 }
 
 export interface AuthorizationAttemptStore {
   create(state: string, attempt: AuthorizationAttempt): Promise<void>
-  consume(state: string, browserBindingHash: string, now: number): Promise<boolean>
+  consume(state: string, browserBindingHash: string, now: number): Promise<AuthorizationAttempt | null>
 }
 
 export function randomToken(): string {

@@ -8,10 +8,17 @@ import {
   type DiscordTokens,
   type DiscordFailureDiagnostic,
 } from '../discord/oauth'
+import {
+  DiscordGatewayFailure,
+  describeGatewayFailure,
+  type DiscordPresencePublisher,
+  type GatewayFailureDiagnostic,
+  type GatewayProbeReport,
+} from '../discord/gateway'
 
 export interface ProbeReport {
   gate: 'unverified'
-  publication: 'not_tested'
+  publication: 'not_tested' | 'sent' | 'failed'
   oauth: 'verified' | 'failed'
   requestedScopes: readonly string[]
   authorization?: DiscordAuthorization
@@ -19,12 +26,15 @@ export interface ProbeReport {
   failure?: DiscordFailureDiagnostic & { operation: DiscordOperation | 'admission' }
   cleanup: 'revoked' | 'failed' | 'not_obtained'
   cleanupFailure?: DiscordFailureDiagnostic
+  gateway?: GatewayProbeReport
+  publicationFailure?: GatewayFailureDiagnostic
 }
 
 export async function inspectDiscordAccess(
   client: DiscordOAuthClient,
   code: string,
   allowedUsers: ReadonlySet<string>,
+  presence?: { publisher: DiscordPresencePublisher | undefined },
 ): Promise<ProbeReport> {
   const report: ProbeReport = {
     gate: 'unverified',
@@ -50,6 +60,27 @@ export async function inspectDiscordAccess(
     report.authorization = refreshed
     report.refreshed = true
     report.oauth = 'verified'
+    if (presence) {
+      report.publication = 'failed'
+      try {
+        if (!refreshed.scopes.includes('sdk.social_layer_presence')) {
+          throw new DiscordGatewayFailure({ reason: 'presence_scope_missing' })
+        }
+        if (!presence.publisher) throw new DiscordGatewayFailure({ reason: 'publisher_unavailable' })
+        report.gateway = await presence.publisher.testPresence({
+          applicationId: refreshed.applicationId,
+          userId: refreshed.userId,
+          accessToken: tokens.accessToken,
+        })
+        if (report.gateway.connected && report.gateway.activitySent && report.gateway.clearSent && !report.gateway.failure) {
+          report.publication = 'sent'
+        } else {
+          report.publicationFailure = report.gateway.failure ?? { reason: 'incomplete_gateway_test' }
+        }
+      } catch (error) {
+        report.publicationFailure = describeGatewayFailure(error)
+      }
+    }
   } catch (error) {
     report.failure = error instanceof DiscordOAuthFailure
       ? { operation: error.operation, ...describeDiscordFailure(error) }

@@ -3,8 +3,8 @@
 DRMC is intended to link Discord and Last.fm accounts and display Last.fm music
 as a Discord Listening activity, with all service execution on Cloudflare Workers.
 
-**The repository currently implements the Discord OAuth feasibility probe. The
-music synchronization service is gated on a supported cloud-only publishing
+**The repository currently implements Discord OAuth and an experimental presence
+probe. Music synchronization is gated on verifying the cloud publishing
 transport.** Successful OAuth authorization does not establish that transport.
 
 ## Run the probe locally
@@ -48,7 +48,23 @@ The callback checks the authorized application and allowlisted user, refreshes
 the token, inspects the new authorization, and revokes the obtained grant.
 The JSON report lists scopes and lifecycle results. It never returns tokens,
 authorization codes, or the operator key. Every report retains
-`gate: "unverified"` and `publication: "not_tested"`.
+`gate: "unverified"`. The default OAuth-only test reports `publication: "not_tested"`.
+
+Select **Publish a 45-second test activity** to also test the remote OAuth Gateway
+transport. After authorizing, check your Discord profile for **Cloudflare presence
+test** while the callback waits. Enable Discord activity sharing before testing.
+The callback clears the activity, closes the socket, and revokes the grant before
+returning its report. A successful protocol run reports `publication: "sent"`
+and `gateway` lifecycle evidence; a failure reports `publication: "failed"`
+and a sanitized `publicationFailure`. Sending a frame proves neither that
+Discord accepted the activity nor that other users can see it. Confirm the
+activity appeared and disappeared in Discord before treating publishing as verified.
+
+The Gateway handshake and presence payloads are ported from the MIT-licensed
+[Discord-Social-RPC 0.2.3](https://github.com/LeonLeBreton/Discord-Social-RPC/tree/b4996e61547505742b141378fe073650808adfd4),
+with its license retained in the source and Worker bundle. This OAuth Gateway
+transport is undocumented by Discord. The port uses Workers' outbound WebSocket
+upgrade and JavaScript timers; no native library or desktop helper runs.
 
 Tokens exist only in the callback's memory. Browser-bound, ten-minute, one-use
 authorization attempts use SQLite Durable Objects and are deleted on consumption

@@ -38,15 +38,19 @@ for (const [state, label] of [['disabled', 'Probe disabled'], ['unconfigured', '
     await expect(page.getByRole('status')).toHaveText(label)
     const key = page.getByLabel('Operator access key')
     const submit = page.getByRole('button', { name: 'Continue to Discord' })
+    const presence = page.getByLabel('Publish a 45-second test activity')
     if (state === 'ready') {
       await expect(key).toBeEnabled()
       await expect(submit).toBeEnabled()
+      await expect(presence).toBeEnabled()
+      await expect(presence).not.toBeChecked()
       await expect(key).toHaveAttribute('type', 'password')
       await expect(page.locator('form')).toHaveAttribute('method', 'post')
       await expect(page.locator('form')).toHaveAttribute('action', '/probe/start')
     } else {
       await expect(key).toBeDisabled()
       await expect(submit).toBeDisabled()
+      await expect(presence).toBeDisabled()
     }
   })
 }
@@ -62,21 +66,25 @@ test('unavailable or malformed readiness responses keep the probe closed', async
   }
 })
 
-test('native form submits the key directly to the same-origin Worker', async ({ page }) => {
-  const key = 'browser-test-key-only'
-  await page.route('**/api/probe', route => route.fulfill({ json: { state: 'ready', publication: 'not_tested' } }))
-  await page.route('**/probe/start', async route => {
-    const request = route.request()
-    expect(request.method()).toBe('POST')
-    expect(request.headers().origin).toBe('http://localhost:8787')
-    expect(new URLSearchParams(request.postData()!).get('access_key')).toBe(key)
-    await route.fulfill({ contentType: 'text/html', body: '<h1>Mock probe start</h1>' })
+for (const publish of [false, true]) {
+  test(`native form submits the key and presence choice ${publish} directly to the same-origin Worker`, async ({ page }) => {
+    const key = 'browser-test-key-only'
+    await page.route('**/api/probe', route => route.fulfill({ json: { state: 'ready', publication: 'not_tested' } }))
+    await page.route('**/probe/start', async route => {
+      const request = route.request()
+      expect(request.method()).toBe('POST')
+      expect(request.headers().origin).toBe('http://localhost:8787')
+      expect(new URLSearchParams(request.postData()!).get('access_key')).toBe(key)
+      expect(new URLSearchParams(request.postData()!).get('experiment')).toBe(publish ? 'presence' : null)
+      await route.fulfill({ contentType: 'text/html', body: '<h1>Mock probe start</h1>' })
+    })
+    await page.goto('/probe')
+    await expect(page.getByRole('status')).toHaveText('Ready for a test')
+    await page.getByLabel('Operator access key').fill(key)
+    if (publish) await page.getByLabel('Publish a 45-second test activity').check()
+    expect(await page.evaluate(() => localStorage.getItem('access_key'))).toBeNull()
+    await page.getByRole('button', { name: 'Continue to Discord' }).click()
+    await expect(page).toHaveURL('http://localhost:8787/probe/start')
+    await expect(page.getByRole('heading', { name: 'Mock probe start' })).toBeVisible()
   })
-  await page.goto('/probe')
-  await expect(page.getByRole('status')).toHaveText('Ready for a test')
-  await page.getByLabel('Operator access key').fill(key)
-  expect(await page.evaluate(() => localStorage.getItem('access_key'))).toBeNull()
-  await page.getByRole('button', { name: 'Continue to Discord' }).click()
-  await expect(page).toHaveURL('http://localhost:8787/probe/start')
-  await expect(page.getByRole('heading', { name: 'Mock probe start' })).toBeVisible()
-})
+}

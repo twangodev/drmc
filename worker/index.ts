@@ -1,6 +1,8 @@
 import { CloudflareAuthorizationAttempts, type OAuthAttempt } from './cloudflare/oauth-attempt'
 import { handleProbeRequest } from '../src/lib/server/probe/handler'
 import type { ProbeSettings } from '../src/lib/server/probe/configuration'
+import { DiscordGatewayPresence } from '../src/lib/server/discord/gateway'
+import { connectDiscordGateway } from './cloudflare/discord-gateway'
 
 export { OAuthAttempt } from './cloudflare/oauth-attempt'
 
@@ -17,6 +19,7 @@ export default {
     }
     return handleProbeRequest(request, env, {
       attempts: new CloudflareAuthorizationAttempts(env.OAUTH_ATTEMPTS),
+      presence: new DiscordGatewayPresence(connectDiscordGateway),
     })
   },
 } satisfies ExportedHandler<Env>

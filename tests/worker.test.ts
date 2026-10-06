@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test, type TestContext } from 'node:test'
-import { Miniflare, Response as MiniflareResponse, type Request as MiniflareRequest } from 'miniflare'
+import { Miniflare, Response as MiniflareResponse, WebSocketPair, type Request as MiniflareRequest } from 'miniflare'
 
 const origin = 'https://drmc.test'
 const applicationId = '123456789012345678'
@@ -22,9 +22,13 @@ class DiscordFixture {
   requests: string[] = []
   revokeRateLimits: { body: Record<string, unknown> | string; headers?: Record<string, string> }[] = []
   revocationsAt: number[] = []
+  gatewayStatus = 101
+  gatewayUserId = allowedUserId
+  scopes = grantedScopes
 
   async respond(request: MiniflareRequest): Promise<MiniflareResponse> {
     const url = new URL(request.url)
+    if (url.origin === 'https://gateway.discord.gg') return this.gateway(request)
     assert.equal(url.origin, 'https://discord.com')
     assert.equal(request.headers.get('User-Agent'), 'DiscordBot (https://github.com/twangodev/drmc, 1.0.0)')
     if (url.pathname === '/api/v10/oauth2/@me') {
@@ -32,7 +36,7 @@ class DiscordFixture {
       assert.match(request.headers.get('Authorization') ?? '', /^Bearer (initial|refreshed)-access-token$/)
       return MiniflareResponse.json({
         application: { id: this.application },
-        scopes: grantedScopes,
+        scopes: this.scopes,
         expires: '2026-10-20T00:00:00Z',
         user: { id: this.userId },
       })
@@ -92,6 +96,37 @@ class DiscordFixture {
       scope: grantedScopes.join(' '),
     })
   }
+
+  private gateway(request: MiniflareRequest): MiniflareResponse {
+    this.requests.push('gateway')
+    assert.equal(request.url, 'https://gateway.discord.gg/?v=10&encoding=json')
+    assert.equal(request.headers.get('Upgrade'), 'websocket')
+    assert.equal(request.headers.get('Authorization'), null)
+    if (this.gatewayStatus !== 101) return new MiniflareResponse('PRIVATE UPGRADE BODY', { status: this.gatewayStatus })
+    const [client, server] = Object.values(new WebSocketPair())
+    server.accept()
+    server.addEventListener('message', event => {
+      const frame = JSON.parse(event.data as string) as { op: number; d: Record<string, unknown> }
+      if (frame.op === 2) {
+        this.requests.push('identify')
+        assert.equal(frame.d.token, 'Bearer refreshed-access-token')
+        assert.equal(frame.d.intents, 0)
+        assert.equal((frame.d.properties as Record<string, unknown>).device, applicationId)
+        server.send(JSON.stringify({ op: 0, t: 'READY', s: 1, d: { user: { id: this.gatewayUserId } } }))
+      } else if (frame.op === 1) {
+        server.send(JSON.stringify({ op: 11, d: null }))
+      } else if (frame.op === 3) {
+        const activities = frame.d.activities as Record<string, unknown>[]
+        this.requests.push(activities.length ? 'publish' : 'clear')
+        if (activities.length) {
+          assert.equal(activities[0]!.type, 2)
+          assert.equal(activities[0]!.details, 'Cloudflare presence test')
+        }
+      } else assert.fail(`Unexpected Gateway opcode ${frame.op}`)
+    })
+    server.send(JSON.stringify({ op: 10, d: { heartbeat_interval: 1000 } }))
+    return new MiniflareResponse(null, { status: 101, webSocket: client })
+  }
 }
 
 function createRuntime(context: TestContext, discord = new DiscordFixture(), overrides: Record<string, string> = {}) {
@@ -134,12 +169,12 @@ function createRuntime(context: TestContext, discord = new DiscordFixture(), ove
   return { runtime, discord }
 }
 
-async function beginProbe(runtime: Miniflare) {
+async function beginProbe(runtime: Miniflare, experiment?: 'presence') {
   const response = await runtime.dispatchFetch(`${origin}/probe/start`, {
     method: 'POST',
     redirect: 'manual',
     headers: { Origin: origin },
-    body: new URLSearchParams({ access_key: accessKey }),
+    body: new URLSearchParams({ access_key: accessKey, ...(experiment ? { experiment } : {}) }),
   })
   assert.equal(response.status, 303)
   const authorization = new URL(response.headers.get('Location')!)
@@ -258,6 +293,89 @@ test('successful scope and refresh checks never mark publishing verified or expo
   assert.equal(response.headers.get('Cache-Control'), 'no-store')
   assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer')
   assert.match(response.headers.get('Set-Cookie')!, /Max-Age=0/)
+})
+
+test('an opted-in presence probe upgrades a Worker WebSocket, publishes, clears, then revokes', { timeout: 60_000 }, async context => {
+  const { runtime, discord } = createRuntime(context)
+  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(response.status, 200, JSON.stringify(body))
+  assert.equal(body.oauth, 'verified')
+  assert.equal(body.publication, 'sent')
+  assert.equal(body.gate, 'unverified')
+  assert.equal(body.cleanup, 'revoked')
+  assert.deepEqual(body.gateway, {
+    connected: true, heartbeatAcknowledged: true, activitySent: true, clearSent: true, heldForSeconds: 45,
+  })
+  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'inspect', 'gateway', 'identify', 'publish', 'clear', 'revoke'])
+  for (const secret of ['refreshed-access-token', 'refresh-token', accessKey, 'test-client-secret']) {
+    assert.equal(JSON.stringify(body).includes(secret), false)
+  }
+  assert.equal((await callback(runtime, await beginProbe(runtime), { code: 'test-code', experiment: 'presence' })).status, 200)
+  assert.equal(discord.requests.filter(operation => operation === 'gateway').length, 1)
+})
+
+test('a rejected Gateway upgrade preserves verified OAuth and still revokes the grant', async context => {
+  const discord = new DiscordFixture()
+  discord.gatewayStatus = 429
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(body.oauth, 'verified')
+  assert.equal(body.publication, 'failed')
+  assert.equal(body.cleanup, 'revoked')
+  assert.deepEqual(body.publicationFailure, { reason: 'upgrade_failed', status: 429 })
+  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'inspect', 'gateway', 'revoke'])
+  assert.equal(JSON.stringify(body).includes('PRIVATE UPGRADE'), false)
+})
+
+test('the presence probe verifies the Gateway account before publishing and revokes on mismatch', async context => {
+  const discord = new DiscordFixture()
+  discord.gatewayUserId = '345678901234567890'
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.deepEqual(body.publicationFailure, { reason: 'gateway_account_mismatch' })
+  assert.equal(body.cleanup, 'revoked')
+  assert.equal(discord.requests.includes('publish'), false)
+})
+
+test('missing presence scope skips the Gateway and revokes the verified OAuth grant', async context => {
+  const discord = new DiscordFixture()
+  discord.scopes = ['identify', 'openid']
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(body.oauth, 'verified')
+  assert.equal(body.publication, 'failed')
+  assert.deepEqual(body.publicationFailure, { reason: 'presence_scope_missing' })
+  assert.equal(body.cleanup, 'revoked')
+  assert.equal(discord.requests.includes('gateway'), false)
+})
+
+test('unlisted accounts never reach the Gateway even when presence is requested', async context => {
+  const discord = new DiscordFixture()
+  discord.userId = '345678901234567890'
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
+  assert.equal(response.status, 403)
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(body.cleanup, 'revoked')
+  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'revoke'])
+})
+
+test('unknown experiments fail before an OAuth attempt is created', async context => {
+  const { runtime, discord } = createRuntime(context)
+  const response = await runtime.dispatchFetch(`${origin}/probe/start`, {
+    method: 'POST', headers: { Origin: origin },
+    body: new URLSearchParams({ access_key: accessKey, experiment: 'private-provider-token' }),
+  })
+  assert.equal(response.status, 400)
+  assert.deepEqual(await response.json(), { error: 'invalid_experiment' })
+  assert.deepEqual(discord.requests, [])
 })
 
 test('authorization attempts reject another browser and can only be consumed once', async context => {

@@ -31,7 +31,7 @@
 <div class="page-width pt-12 sm:pt-16">
   <p class="eyebrow flex items-center gap-2"><FlaskConical size={14} aria-hidden="true" />Development tools</p>
   <h1 class="mt-4 text-4xl font-semibold tracking-tight sm:text-5xl">Discord access probe</h1>
-  <p class="mt-4 max-w-xl text-base leading-relaxed text-muted">A controlled test of Discord authorization, token refresh, and revocation. Presence publishing remains unverified.</p>
+  <p class="mt-4 max-w-xl text-base leading-relaxed text-muted">Test Discord authorization, refresh, and revocation. Optionally publish a temporary Listening activity to check your profile.</p>
 
   <div class="mt-10 grid gap-8 md:grid-cols-[1.2fr_1fr] md:gap-12">
     <section class="rounded-lg border border-subtle bg-surface p-5 sm:p-6" aria-labelledby="authorization-title">
@@ -43,6 +43,11 @@
         <input id="access-key" name="access_key" type="password" required autocomplete="off" disabled={state !== 'ready'} aria-describedby="key-help"
           class="mt-2 h-11 w-full rounded-md border border-subtle bg-bg px-3 text-sm disabled:opacity-40" />
         <p id="key-help" class="mt-2 text-[11px] leading-relaxed text-muted">For allowlisted development accounts. Keep this key private.</p>
+        <label class="mt-5 flex items-start gap-3 text-sm leading-relaxed">
+          <input type="checkbox" name="experiment" value="presence" disabled={state !== 'ready'} aria-describedby="presence-help" class="mt-1 accent-current" />
+          <span>Publish a 45-second test activity</span>
+        </label>
+        <p id="presence-help" class="mt-2 text-[11px] leading-relaxed text-muted">After authorizing, check your Discord profile for “Cloudflare presence test” while this page waits. Enable Discord’s activity sharing so it can appear. The test then clears the activity and revokes access.</p>
         <Button type="submit" disabled={state !== 'ready'} class="mt-6 w-full">Continue to Discord <ArrowRight size={15} aria-hidden="true" /></Button>
       </form>
     </section>
@@ -54,7 +59,8 @@
       <ol class="mt-3 space-y-3 text-sm leading-relaxed text-muted">
         <li><span class="mr-2 font-mono text-[10px]">01</span>Check the application and test account.</li>
         <li><span class="mr-2 font-mono text-[10px]">02</span>Refresh and inspect the authorization.</li>
-        <li><span class="mr-2 font-mono text-[10px]">03</span>Revoke the grant and return a JSON report.</li>
+        <li><span class="mr-2 font-mono text-[10px]">03</span>If selected, publish and clear a test activity.</li>
+        <li><span class="mr-2 font-mono text-[10px]">04</span>Revoke the grant and return a JSON report.</li>
       </ol>
       <p class="mt-7 border-t border-subtle pt-4 text-xs leading-relaxed text-muted">If revocation fails or the callback is interrupted, remove the development application in Discord’s Authorized Apps settings.</p>
     </aside>

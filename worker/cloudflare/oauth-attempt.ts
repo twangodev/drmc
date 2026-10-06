@@ -9,19 +9,19 @@ export class OAuthAttempt extends DurableObject {
     })
   }
 
-  async consume(browserBindingHash: string, now: number): Promise<boolean> {
+  async consume(browserBindingHash: string, now: number): Promise<AuthorizationAttempt | null> {
     return this.ctx.storage.transaction(async storage => {
       const attempt = await storage.get<AuthorizationAttempt>('attempt')
-      if (!attempt) return false
+      if (!attempt) return null
       if (attempt.expiresAt <= now) {
         await storage.delete('attempt')
         await storage.deleteAlarm()
-        return false
+        return null
       }
-      if (attempt.browserBindingHash !== browserBindingHash) return false
+      if (attempt.browserBindingHash !== browserBindingHash) return null
       await storage.delete('attempt')
       await storage.deleteAlarm()
-      return true
+      return attempt
     })
   }
 
@@ -37,7 +37,7 @@ export class CloudflareAuthorizationAttempts implements AuthorizationAttemptStor
     await this.forState(state).create(attempt)
   }
 
-  async consume(state: string, browserBindingHash: string, now: number): Promise<boolean> {
+  async consume(state: string, browserBindingHash: string, now: number): Promise<AuthorizationAttempt | null> {
     return this.forState(state).consume(browserBindingHash, now)
   }
 
