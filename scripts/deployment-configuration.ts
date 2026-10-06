@@ -1,4 +1,5 @@
-import { readProbeConfiguration, type ProbeSettings } from '../src/lib/server/probe/configuration.ts'
+import { readProbeConfiguration } from '../src/lib/server/probe/configuration.ts'
+import { requireServiceConfiguration, type ServiceSettings } from '../src/lib/server/accounts/configuration.ts'
 
 export interface DeploymentConfiguration {
   origin: string
@@ -28,20 +29,24 @@ export async function resolveDeploymentOrigin(
   return `https://${workerName}.${subdomain}.workers.dev`
 }
 
-export function readDeploymentConfiguration(settings: ProbeSettings): DeploymentConfiguration {
+export function readDeploymentConfiguration(settings: ServiceSettings): DeploymentConfiguration {
   const origin = deploymentOrigin(settings.APP_ORIGIN)
   const enabled = settings.PROBE_ENABLED ?? 'false'
   if (!['true', 'false'].includes(enabled)) throw new Error('PROBE_ENABLED must be true or false')
+  const serviceEnabled = settings.SERVICE_ENABLED ?? 'false'
+  if (!['true', 'false'].includes(serviceEnabled)) throw new Error('SERVICE_ENABLED must be true or false')
   const variables = {
+    SERVICE_ENABLED: serviceEnabled,
     APP_ORIGIN: origin,
     PROBE_ENABLED: enabled,
     DISCORD_CLIENT_ID: settings.DISCORD_CLIENT_ID ?? '',
     PROBE_ALLOWED_DISCORD_IDS: settings.PROBE_ALLOWED_DISCORD_IDS ?? '',
   }
   const secrets = Object.fromEntries(
-    Object.entries({ DISCORD_CLIENT_SECRET: settings.DISCORD_CLIENT_SECRET, PROBE_ACCESS_KEY: settings.PROBE_ACCESS_KEY })
+    Object.entries({ DISCORD_CLIENT_SECRET: settings.DISCORD_CLIENT_SECRET, PROBE_ACCESS_KEY: settings.PROBE_ACCESS_KEY, LASTFM_API_KEY: settings.LASTFM_API_KEY, LASTFM_API_SECRET: settings.LASTFM_API_SECRET, TOKEN_ENCRYPTION_KEY: settings.TOKEN_ENCRYPTION_KEY })
       .filter((entry): entry is [string, string] => Boolean(entry[1])),
   )
+  if (serviceEnabled === 'true') requireServiceConfiguration({ ...variables, ...secrets })
   if (enabled === 'true') readProbeConfiguration({ ...variables, ...secrets })
   return { origin, variables, secrets }
 }

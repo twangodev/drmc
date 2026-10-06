@@ -12,7 +12,7 @@ test('hosted deployment requires a canonical HTTPS origin', () => {
 test('first deployment disables the probe without requiring Discord credentials', () => {
   assert.deepEqual(readDeploymentConfiguration({ APP_ORIGIN: 'https://drmc.test' }), {
     origin: 'https://drmc.test',
-    variables: { APP_ORIGIN: 'https://drmc.test', PROBE_ENABLED: 'false', DISCORD_CLIENT_ID: '', PROBE_ALLOWED_DISCORD_IDS: '' },
+    variables: { SERVICE_ENABLED: 'false', APP_ORIGIN: 'https://drmc.test', PROBE_ENABLED: 'false', DISCORD_CLIENT_ID: '', PROBE_ALLOWED_DISCORD_IDS: '' },
     secrets: {},
   })
   assert.throws(() => readDeploymentConfiguration({ APP_ORIGIN: 'https://drmc.test', PROBE_ENABLED: 'yes' }), /PROBE_ENABLED/)
@@ -52,4 +52,17 @@ test('invalid subdomain responses fail without exposing provider bodies or secre
   }
   await assert.rejects(resolveDeploymentOrigin(settings, 'drmc', async () => new Response('private-provider-error', { status: 403 })), /HTTP 403/)
   assert.equal(await resolveDeploymentOrigin({ APP_ORIGIN: 'https://drmc.test' }, 'drmc', async () => { throw new Error('must not fetch') }), 'https://drmc.test')
+})
+
+
+test('production account linking validates provider secrets and keeps them out of Worker variables', () => {
+  const settings = { APP_ORIGIN: 'https://drmc.test', SERVICE_ENABLED: 'true', DISCORD_CLIENT_ID: '123456789012345678', DISCORD_CLIENT_SECRET: 'test-secret', LASTFM_API_KEY: 'a'.repeat(32), LASTFM_API_SECRET: 'b'.repeat(32), TOKEN_ENCRYPTION_KEY: 'c'.repeat(64) }
+  const configuration = readDeploymentConfiguration(settings)
+  assert.equal(configuration.variables.SERVICE_ENABLED, 'true')
+  for (const key of ['LASTFM_API_KEY', 'LASTFM_API_SECRET', 'TOKEN_ENCRYPTION_KEY', 'DISCORD_CLIENT_SECRET'] as const) {
+    assert.equal(key in configuration.variables, false)
+    assert.equal(configuration.secrets[key], settings[key])
+    assert.throws(() => readDeploymentConfiguration({ ...settings, [key]: undefined }))
+  }
+  assert.throws(() => readDeploymentConfiguration({ ...settings, SERVICE_ENABLED: 'yes' }), /SERVICE_ENABLED/)
 })
