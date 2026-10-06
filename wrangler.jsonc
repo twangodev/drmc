@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "drmc",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-05",
+  "durable_objects": {
+    "bindings": [
+      { "name": "OAUTH_ATTEMPTS", "class_name": "OAuthAttempt" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OAuthAttempt"] }
+  ],
+  "vars": {
+    "APP_ORIGIN": "http://localhost:8787",
+    "PROBE_ENABLED": "false",
+    "PROBE_ALLOWED_DISCORD_IDS": ""
+  },
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true
+  }
+}

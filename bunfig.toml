@@ -1,3 +1,2 @@
 [run]
-# Use Bun for package scripts, including tools with a Node.js shebang.
-bun = true
+bun = false

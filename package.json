@@ -1,20 +1,27 @@
 {
-  "name": "drrpc",
+  "name": "drmc",
   "version": "1.0.0",
-  "description": "",
+  "description": "Cloudflare-hosted Last.fm to Discord music presence",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "packageManager": "bun@1.4.0",
+  "engines": { "node": ">=24" },
   "scripts": {
-    "start": "bun run src/index.ts",
-    "dev": "bun --watch run src/index.ts",
-    "check": "tsc --noEmit",
-    "build": "bun run check && bun build src/index.ts --target=bun --outdir=dist"
+    "start": "bun run dev",
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8787",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.tools.json",
+    "audit:discord": "node scripts/audit-discord-api.ts",
+    "build": "bun run check && wrangler deploy --dry-run --outdir=dist",
+    "test": "bun run build && node --test tests/*.test.ts"
   },
   "dependencies": {},
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.1",
     "@types/bun": "^1.4.2",
-    "typescript": "^6.0.3"
+    "miniflare": "^5.20261001.0-alpha",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.147.0"
   },
   "private": true
 }

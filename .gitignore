@@ -150,3 +150,8 @@ vite.config.ts.timestamp-*
 
 # JetBrains IDE settings
 .idea/
+
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
