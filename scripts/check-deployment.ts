@@ -23,7 +23,8 @@ async function verifyDeployment(): Promise<void> {
     const response = await request(path)
     assert.equal(response.status, 200, `${path} is unavailable`)
     assert.match(response.headers.get('Content-Type') ?? '', /text\/html/)
-    assert.equal(response.headers.get('Referrer-Policy'), path === '/app' ? 'no-referrer' : 'same-origin')
+    const referrerPolicies = response.headers.get('Referrer-Policy')?.split(',').map(policy => policy.trim())
+    assert.equal(referrerPolicies?.at(-1), path === '/app' ? 'no-referrer' : 'same-origin')
     assert.equal(response.headers.get('X-Frame-Options'), 'DENY')
     assert.match(await response.text(), /DRMC/)
   }
