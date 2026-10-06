@@ -4,6 +4,9 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-05",
   "workers_dev": true,
+  "routes": [
+    { "pattern": "drmc.twango.dev", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./build",
     "binding": "ASSETS",

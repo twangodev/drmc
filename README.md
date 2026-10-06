@@ -102,13 +102,14 @@ Set these repository or `production` environment settings in GitHub:
 
 | Kind | Name | Value |
 | --- | --- | --- |
-| Secret | `CLOUDFLARE_API_TOKEN` | A Workers deployment token for the target account |
+| Secret | `CLOUDFLARE_API_TOKEN` | Workers deployment access and Workers Routes Write for the `twango.dev` zone |
 | Variable | `CLOUDFLARE_ACCOUNT_ID` | The target Cloudflare account ID |
-| Optional variable | `APP_ORIGIN` | Override the automatically discovered `https://drmc.<subdomain>.workers.dev` origin |
+| Optional variable | `APP_ORIGIN` | Override the production origin, `https://drmc.twango.dev` |
 
-The workflow discovers the account's Workers subdomain and reports the hosted
-URL. The first deployment serves the UI with the probe disabled. To enable a
-controlled OAuth experiment, register the hosted `/probe/callback` URL in Discord,
+Wrangler attaches `drmc.twango.dev` as the Worker's custom domain and manages its
+DNS and certificate. The first deployment serves the UI with the probe disabled.
+To enable a controlled OAuth experiment, register
+`https://drmc.twango.dev/probe/callback` in Discord,
 set GitHub variables `DISCORD_CLIENT_ID`, `PROBE_ALLOWED_DISCORD_IDS`, and
 `PROBE_ENABLED=true`, and secrets `DISCORD_CLIENT_SECRET` and `PROBE_ACCESS_KEY`.
 Deployment validates this configuration before uploading. Provider secrets are
@@ -119,8 +120,8 @@ For a manual deployment using an authenticated Wrangler session:
 
 ```sh
 bun run build:release
-APP_ORIGIN='https://drmc.<subdomain>.workers.dev' CLOUDFLARE_ACCOUNT_ID='<account_id>' bun run deploy
-APP_ORIGIN='https://drmc.<subdomain>.workers.dev' bun run check:deployment
+APP_ORIGIN='https://drmc.twango.dev' CLOUDFLARE_ACCOUNT_ID='<account_id>' bun run deploy
+APP_ORIGIN='https://drmc.twango.dev' bun run check:deployment
 ```
 
 Use the actual origin and account ID in place of the placeholders. The deploy
