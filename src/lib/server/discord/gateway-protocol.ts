@@ -44,11 +44,13 @@ export function identifyGateway(applicationId: string, accessToken: string) {
 
 export interface DiscordActivity {
   name: string
-  type: 2
+  application_id?: string
+  type: 0 | 2
   details: string
   state: string
   timestamps?: { start: number }
-  assets?: { large_image: string; large_text: string }
+  assets?: { large_image?: string; large_text?: string; small_image?: string; small_text?: string }
+  buttons?: { label: string; url: string }[]
 }
 
 export function updateGatewayPresence(active: boolean | DiscordActivity | null) {

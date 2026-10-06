@@ -12,9 +12,8 @@ const apiSecret = 'c'.repeat(32)
 test('Last.fm web authentication and AES credentials run in workerd without exposing secrets', async context => {
   let providerMode = 'playing'
   const modules: Record<string, { type: 'esm'; contents: string }> = {}
-  for (const name of ['lastfm/client', 'accounts/credentials', 'discord/gateway-protocol']) {
-    const path = `src/lib/server/${name}.js`
-    modules[path] = { type: 'esm', contents: stripTypeScriptTypes(readFileSync(`src/lib/server/${name}.ts`, 'utf8')).replace("'../discord/gateway-protocol'", "'../discord/gateway-protocol.js'") }
+  for (const name of ['src/lib/server/lastfm/client', 'src/lib/server/accounts/credentials', 'src/lib/server/discord/gateway-protocol', 'src/lib/music']) {
+    modules[`${name}.js`] = { type: 'esm', contents: stripTypeScriptTypes(readFileSync(`${name}.ts`, 'utf8')).replaceAll('.ts\'', '.js\'') }
   }
   modules['index.js'] = { type: 'esm', contents: `
     import {LastfmClient,lastfmSignature} from './src/lib/server/lastfm/client.js';
@@ -49,14 +48,14 @@ test('Last.fm web authentication and AES credentials run in workerd without expo
     if (providerMode === 'failure') return RuntimeResponse.json({ error: 29, message: 'PRIVATE PROVIDER BODY' })
     if (providerMode === 'malformed') return RuntimeResponse.json({ recenttracks: {} })
     if (providerMode === 'idle') return RuntimeResponse.json({ recenttracks: { track: [] } })
-    return RuntimeResponse.json({ recenttracks: { track: [{ name: 'Everything In Its Right Place', artist: { name: 'Radiohead' }, album: { '#text': 'Kid A' }, image: [{ '#text': 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png' }], '@attr': { nowplaying: 'true' } }] } })
+    return RuntimeResponse.json({ recenttracks: { track: [{ name: 'Everything In Its Right Place', artist: { name: 'Radiohead' }, album: { '#text': 'Kid A' }, loved: '1', url: 'https://www.last.fm/music/Radiohead/_/Everything+In+Its+Right+Place', image: [{ '#text': 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png' }], '@attr': { nowplaying: 'true' } }] } })
   } } } }] })
   context.after(() => runtime.dispose())
   const fetchJson = async (path: string) => { const response = await runtime.dispatchFetch(`https://providers.test${path}`); const body = await response.text(); assert.ok(response.headers.get('Content-Type')?.includes('application/json'), path + ': ' + body); return JSON.parse(body) }
   assert.equal(await fetchJson('/signature'), createHash('md5').update(`api_key${apiKey}methodauth.getSessiontoken${token}${apiSecret}`).digest('hex'))
   assert.deepEqual(await fetchJson('/session'), { username: 'twangodev', key: token })
   assert.deepEqual(await fetchJson('/vault'), { distinct: true, encrypted: true, opened: { token: 'secret-value' }, rejected: true, tamperRejected: true })
-  assert.deepEqual(await fetchJson('/track'), { track: { title: 'Everything In Its Right Place', artist: 'Radiohead', album: 'Kid A', artwork: 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png' } })
+  assert.deepEqual(await fetchJson('/track'), { track: { title: 'Everything In Its Right Place', artist: 'Radiohead', album: 'Kid A', loved: true, url: 'https://www.last.fm/music/Radiohead/_/Everything+In+Its+Right+Place', artwork: 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png' } })
   providerMode = 'idle'; assert.deepEqual(await fetchJson('/track'), { track: null })
   providerMode = 'malformed'; assert.deepEqual(await fetchJson('/track'), { reason: 'invalid_track_response' })
   providerMode = 'failure'; assert.deepEqual(await fetchJson('/track'), { reason: 'rate_limited' })

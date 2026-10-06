@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { defaultMusicPreferences, readMusicPreferences } from '../src/lib/music-preferences.ts'
+import { lastfmArtwork, lastfmMusicLink, lastfmTrackUrl, type ListeningTrack } from '../src/lib/music.ts'
+import { musicActivity } from '../src/lib/server/discord/music-activity.ts'
+import { providerRetryAfter } from '../src/lib/server/lastfm/client.ts'
+
+const track: ListeningTrack = { title: 'Everything In Its Right Place', artist: 'Radiohead', album: 'Kid A', loved: true, startedAt: 1_700_000_000_000 }
+const images = { applicationId: '123456789012345678', logo: '970027358432161832', heart: '970173669169053717', cover: 'mp:external/cover.png' }
+
+test('CLI defaults and native form preferences preserve every presence control', () => {
+  assert.deepEqual(defaultMusicPreferences, { refreshInterval: 10, showProfile: true, showLoved: false, showCovers: true, showElapsed: true, keepStatus: false, debug: false })
+  const preferences = readMusicPreferences(new URLSearchParams({ refreshInterval: '30', showLoved: 'on', keepStatus: 'on', debug: 'on' }))
+  assert.deepEqual(preferences, { refreshInterval: 30, showProfile: false, showLoved: true, showCovers: false, showElapsed: false, keepStatus: true, debug: true })
+  for (const interval of ['', '0', '-1', '1.5', 'NaN', '3601', '99999']) assert.throws(() => readMusicPreferences(new URLSearchParams({ refreshInterval: interval })), /invalid_music_preferences/)
+  assert.throws(() => readMusicPreferences(new URLSearchParams({ refreshInterval: '10', showLoved: 'false' })), /invalid_music_preferences/)
+  for (const interval of ['1', '3600']) assert.equal(readMusicPreferences(new URLSearchParams({ refreshInterval: interval })).refreshInterval, Number(interval))
+})
+
+test('the Listening activity has the CLI profile and track buttons, album cover, badge, and elapsed time', () => {
+  assert.deepEqual(musicActivity(track, 'twangodev', { ...defaultMusicPreferences }, images), {
+    name: 'Last.fm', application_id: images.applicationId, type: 2, details: track.title, state: 'by Radiohead', timestamps: { start: track.startedAt },
+    assets: { large_image: 'mp:external/cover.png', large_text: 'Kid A', small_image: images.logo, small_text: 'DRMC • 1.0.0' },
+    buttons: [{ label: 'Visit last.fm Profile', url: 'https://www.last.fm/user/twangodev' }, { label: 'View scrobble on Last.fm', url: 'https://www.last.fm/music/Radiohead/_/Everything%20In%20Its%20Right%20Place' }],
+  })
+  const customized = musicActivity(track, 'twangodev', { ...defaultMusicPreferences, showProfile: false, showLoved: true, showCovers: false, showElapsed: false }, images)!
+  assert.deepEqual(customized.buttons, [{ label: 'View scrobble on Last.fm', url: lastfmTrackUrl(track) }])
+  assert.deepEqual(customized.assets, { small_image: images.heart, small_text: 'DRMC • 1.0.0' })
+  assert.equal(customized.timestamps, undefined)
+  assert.equal(musicActivity({ ...track, loved: false }, 'twangodev', { ...defaultMusicPreferences, showLoved: true }, images)!.assets!.small_image, images.logo)
+})
+
+test('idle status is opt-in and never carries the last track or an elapsed timer', () => {
+  assert.equal(musicActivity(null, 'twangodev', { ...defaultMusicPreferences }, images), null)
+  assert.deepEqual(musicActivity(null, 'twangodev', { ...defaultMusicPreferences, keepStatus: true }, images), {
+    name: 'Last.fm', application_id: images.applicationId, type: 0, details: 'DRMC', state: '1.0.0', assets: { large_image: images.logo },
+  })
+})
+
+test('missing application assets and long links degrade without sending invalid image keys or buttons', () => {
+  const activity = musicActivity({ ...track, url: 'https://www.last.fm/music/' + 'a'.repeat(512) }, 'twangodev', { ...defaultMusicPreferences }, { applicationId: images.applicationId })!
+  assert.deepEqual(activity.assets, {})
+  assert.deepEqual(activity.buttons, [{ label: 'Visit last.fm Profile', url: 'https://www.last.fm/user/twangodev' }])
+})
+
+test('API links and artwork reject foreign origins and placeholders while preserving encoded track names', () => {
+  assert.equal(lastfmTrackUrl({ title: 'A/B & C', artist: 'AC/DC' }), 'https://www.last.fm/music/AC%2FDC/_/A%2FB%20%26%20C')
+  assert.equal(lastfmMusicLink('http://www.last.fm/music/Radiohead/_/Kid+A'), 'https://www.last.fm/music/Radiohead/_/Kid+A')
+  for (const url of ['javascript:alert(1)', 'https://evil.example/music/song', 'https://www.last.fm@evil.example/music/song', 'https://www.last.fm/api/auth/']) assert.equal(lastfmMusicLink(url), undefined)
+  assert.equal(lastfmArtwork('https://lastfm.freetls.fastly.net/i/u/300x300/2a96cbd8b46e442fc41c2b86b821562f.png'), undefined)
+  assert.equal(lastfmArtwork('https://evil.example/cover.png'), undefined)
+})
+
+test('Last.fm Retry-After supports seconds and dates without accepting invalid or unbounded delays', () => {
+  const now = Date.parse('2026-10-06T00:00:00Z')
+  assert.equal(providerRetryAfter('120', now), 120_000)
+  assert.equal(providerRetryAfter('Tue, 06 Oct 2026 00:02:00 GMT', now), 120_000)
+  for (const value of [null, '', '0', '-1', 'invalid', 'Mon, 05 Oct 2026 00:00:00 GMT']) assert.equal(providerRetryAfter(value, now), undefined)
+  assert.equal(providerRetryAfter('999999999', now), 24 * 3600_000)
+})

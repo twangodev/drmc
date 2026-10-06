@@ -1,11 +1,13 @@
-import { gatewayObject } from '../discord/gateway-protocol'
+import { gatewayObject } from '../discord/gateway-protocol.ts'
+import { lastfmArtwork, lastfmMusicLink, lastfmTrackUrl, musicText, type ListeningTrack } from '../../music.ts'
 
 export interface LastfmSession { username: string; key: string }
-export interface ListeningTrack { title: string; artist: string; album: string; artwork?: string }
+export type { ListeningTrack } from '../../music.ts'
 
 export class LastfmFailure extends Error {
   readonly reason: string
-  constructor(reason: string) { super(reason); this.reason = reason }
+  readonly retryAfterMs?: number
+  constructor(reason: string, retryAfterMs?: number) { super(reason); this.reason = reason; this.retryAfterMs = retryAfterMs }
 }
 
 export class LastfmClient {
@@ -40,12 +42,14 @@ export class LastfmClient {
     if (!track) throw new LastfmFailure('invalid_track_response')
     if (gatewayObject(track['@attr'])?.nowplaying !== 'true') return null
     const artist = gatewayObject(track.artist)
-    const title = boundedText(track.name)
-    const artistName = boundedText(artist?.name ?? artist?.['#text'])
+    const title = musicText(track.name)
+    const artistName = musicText(artist?.name ?? artist?.['#text'])
     if (!title || !artistName) throw new LastfmFailure('invalid_track_response')
     const images = Array.isArray(track.image) ? track.image : []
-    const artwork = images.map(image => gatewayObject(image)?.['#text']).filter(isLastfmArtwork).at(-1)
-    return { title, artist: artistName, album: boundedText(gatewayObject(track.album)?.['#text']) ?? '', ...(artwork ? { artwork } : {}) }
+    const artwork = images.map(image => lastfmArtwork(gatewayObject(image)?.['#text'])).filter(Boolean).at(-1)
+    return { title, artist: artistName, album: musicText(gatewayObject(track.album)?.['#text']) ?? '',
+      loved: track.loved === '1' || track.loved === 1 || track.loved === true,
+      url: lastfmMusicLink(track.url) ?? lastfmTrackUrl({ title, artist: artistName }), ...(artwork ? { artwork } : {}) }
   }
 
   async verifySession(session: LastfmSession): Promise<void> {
@@ -59,15 +63,16 @@ export class LastfmClient {
     try {
       response = await fetch('https://ws.audioscrobbler.com/2.0/', { method: 'POST', body: parameters, redirect: 'manual', signal: AbortSignal.timeout(8000) })
     } catch { throw new LastfmFailure('network_error') }
+    const retryAfterMs = providerRetryAfter(response.headers.get('Retry-After'))
     let body: Record<string, unknown> | null
     try { body = gatewayObject(await response.json()) } catch {
-      throw new LastfmFailure(response.ok ? 'invalid_response' : response.status === 429 ? 'rate_limited' : 'upstream_error')
+      throw new LastfmFailure(response.ok ? 'invalid_response' : response.status === 429 ? 'rate_limited' : 'upstream_error', retryAfterMs)
     }
     if (!body) throw new LastfmFailure('invalid_response')
     if (typeof body.error === 'number') {
-      throw new LastfmFailure(body.error === 29 ? 'rate_limited' : [4, 9, 14, 15].includes(body.error) ? 'authorization_failed' : 'upstream_error')
+      throw new LastfmFailure(body.error === 29 ? 'rate_limited' : [4, 9, 14, 15].includes(body.error) ? 'authorization_failed' : 'upstream_error', retryAfterMs)
     }
-    if (!response.ok) throw new LastfmFailure(response.status === 429 ? 'rate_limited' : 'upstream_error')
+    if (!response.ok) throw new LastfmFailure(response.status === 429 ? 'rate_limited' : 'upstream_error', retryAfterMs)
     return body
   }
 }
@@ -82,11 +87,8 @@ export async function lastfmSignature(parameters: Record<string, string>, secret
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-function boundedText(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 128) : null
-}
-
-function isLastfmArtwork(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-  try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'lastfm.freetls.fastly.net' && !url.username && !url.password } catch { return false }
+export function providerRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (value === null || value.trim() === '') return undefined
+  const delay = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - now
+  return Number.isFinite(delay) && delay > 0 ? Math.min(delay, 24 * 3600_000) : undefined
 }
