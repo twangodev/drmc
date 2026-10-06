@@ -44,7 +44,6 @@ export function identifyGateway(applicationId: string, accessToken: string) {
 
 export interface DiscordActivity {
   name: string
-  application_id?: string
   type: 0 | 2
   details: string
   state: string

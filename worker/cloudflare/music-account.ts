@@ -221,7 +221,7 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
     await this.ensurePresence(accessToken)
     const applicationId = requireServiceConfiguration(this.env).discord.clientId
     const images = await this.applicationAssets.resolve(applicationId)
-    const activity = musicActivity(record.track, record.lastfmUsername!, preferences, { ...images, applicationId })!
+    const activity = musicActivity(record.track, record.lastfmUsername!, preferences, images)!
     const payload = JSON.stringify(activity)
     if (this.published === payload) return
     this.live!.update(activity)
