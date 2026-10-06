@@ -26,6 +26,7 @@ test('delivery diagnostics distinguish sent activities, acknowledged heartbeats,
   diagnostics.received({ op: 0, t: 'PRESENCE_UPDATE', d: { user: { id: userId }, activities: [activity], token: 'PRIVATE TOKEN' } })
   assert.ok(diagnostics.snapshot().activityObservedAt)
   assert.equal(events.at(-1)!.activityObserved, true)
+  assert.equal(events.at(-1)!.activityCount, 1)
   diagnostics.activitySent(null)
   assert.equal(diagnostics.snapshot().activityObservedAt, undefined)
   assert.equal(JSON.stringify(events).includes('PRIVATE'), false)

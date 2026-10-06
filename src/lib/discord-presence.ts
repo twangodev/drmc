@@ -39,4 +39,5 @@ export interface DiscordPresenceEvent {
   dataShape?: DiscordPresenceDispatch['dataShape']
   dataFields?: string[]
   activities?: DiscordPresenceActivity[]
+  activityCount?: number
 }

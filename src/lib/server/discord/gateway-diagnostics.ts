@@ -60,6 +60,7 @@ export class DiscordGatewayDiagnostics {
     if (observed) this.state.activityObservedAt = at
     this.emit({ event: 'gateway_dispatch', at, dispatch: event, ...(dispatch.code !== undefined ? { code: dispatch.code } : {}),
       activityObserved: observed, dataShape: dispatch.dataShape, dataFields: dispatch.dataFields, activities: dispatch.activities,
+      ...(dispatch.activities ? { activityCount: dispatch.activities.length } : {}),
     })
   }
 

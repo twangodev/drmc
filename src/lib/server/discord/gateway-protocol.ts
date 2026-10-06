@@ -56,7 +56,18 @@ export function updateGatewayPresence(active: boolean | DiscordActivity | null) 
   const activity = active === true ? presenceProbeActivity : active === false ? null : active
   return {
     op: 3,
-    d: { since: 0, activities: activity ? [activity] : [], status: 'online', afk: false },
+    d: { since: 0, activities: activity ? [gatewayActivity(activity)] : [], status: 'online', afk: false },
+  }
+}
+
+function gatewayActivity(activity: DiscordActivity) {
+  const { buttons, ...presence } = activity
+  return {
+    ...presence,
+    ...(buttons?.length ? {
+      buttons: buttons.map(button => button.label),
+      metadata: { button_urls: buttons.map(button => button.url) },
+    } : {}),
   }
 }
 

@@ -1,12 +1,33 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { DiscordGatewayFailure, DiscordGatewayPresence, type GatewayConnection } from '../src/lib/server/discord/gateway.ts'
+import { updateGatewayPresence } from '../src/lib/server/discord/gateway-protocol.ts'
 
 const authorization = {
   applicationId: '123456789012345678',
   userId: '234567890123456789',
   accessToken: 'private-test-oauth-token',
 }
+
+test('Gateway activity buttons use aligned labels and URL metadata without changing the music activity', () => {
+  const activity = {
+    name: 'Last.fm', type: 2 as const, details: 'Track', state: 'by Artist',
+    assets: { small_image: '970027358432161832' }, timestamps: { start: 1_700_000_000_000 },
+    buttons: [{ label: 'Profile', url: 'https://www.last.fm/user/listener' }, { label: 'Track', url: 'https://www.last.fm/music/Artist/_/Track' }],
+  }
+  const original = structuredClone(activity)
+  const sent = updateGatewayPresence(activity).d.activities[0]!
+  assert.deepEqual(sent.buttons, ['Profile', 'Track'])
+  assert.deepEqual(sent.metadata, { button_urls: activity.buttons.map(button => button.url) })
+  assert.deepEqual(sent.assets, activity.assets)
+  assert.deepEqual(sent.timestamps, activity.timestamps)
+  assert.deepEqual(activity, original)
+  for (const buttons of [undefined, []]) {
+    const withoutButtons = updateGatewayPresence({ ...activity, buttons }).d.activities[0]!
+    assert.equal('buttons' in withoutButtons, false)
+    assert.equal('metadata' in withoutButtons, false)
+  }
+})
 
 class GatewayFixture implements GatewayConnection {
   frames: { op: number; d: unknown }[] = []
