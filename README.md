@@ -94,8 +94,8 @@ from the server.
 ## Hosted experiment
 
 The single `.github/workflows/svelte.yaml` workflow checks types, builds one
-release artifact, runs Worker and browser tests, deploys that artifact to
-Cloudflare, and verifies the hosted pages, API routing, and source revision.
+release artifact, runs Worker and browser tests, and deploys that artifact to
+Cloudflare. Hosted verification can be run locally with `bun run check:deployment`.
 Pushes to `main` and manual runs on `main` deploy; pull requests only run checks.
 
 Set these repository or `production` environment settings in GitHub:

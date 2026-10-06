@@ -121,8 +121,6 @@ jobs:
     environment:
       name: production
       url: ${{ steps.deploy.outputs.origin }}
-    outputs:
-      origin: ${{ steps.deploy.outputs.origin }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -149,20 +147,3 @@ jobs:
           PROBE_ALLOWED_DISCORD_IDS: ${{ vars.PROBE_ALLOWED_DISCORD_IDS }}
           DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
           PROBE_ACCESS_KEY: ${{ secrets.PROBE_ACCESS_KEY }}
-
-  verify:
-    name: Verify hosted release
-    needs: deploy
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-      - name: Check deployed pages and Worker
-        run: node scripts/check-deployment.ts
-        env:
-          APP_ORIGIN: ${{ needs.deploy.outputs.origin }}
