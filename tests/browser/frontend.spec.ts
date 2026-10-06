@@ -120,3 +120,29 @@ test('account provider redirects are allowed by the effective production content
   expect(policy).toMatch(/form-action[^;]+https:\/\/discord\.com/)
   expect(policy).toMatch(/form-action[^;]+https:\/\/www\.last\.fm/)
 })
+
+test('native account forms preserve the origin required by the Worker', async ({ page }) => {
+  const linkedAccount = { userId: '234567890123456789', lastfmUsername: 'twangodev', enabled: true, status: 'idle', connected: false, track: null }
+  const actions = [
+    { button: 'Connect Discord', path: '/auth/discord/start', account: null },
+    { button: 'Connect Last.fm', path: '/auth/lastfm/start', account: { ...linkedAccount, lastfmUsername: undefined, status: 'link_lastfm' } },
+    { button: 'Pause sharing', path: '/api/account/pause', account: linkedAccount },
+    { button: 'Resume sharing', path: '/api/account/resume', account: { ...linkedAccount, enabled: false, status: 'paused' } },
+    { button: 'Sign out', path: '/api/account/logout', account: linkedAccount },
+    { button: 'Disconnect accounts', path: '/api/account/disconnect', account: linkedAccount },
+  ]
+  for (const action of actions) {
+    await page.route('**/api/account', route => route.fulfill({ json: { enabled: true, account: action.account } }))
+    let sentOrigin: string | undefined
+    await page.route(`**${action.path}`, async route => {
+      expect(route.request().method()).toBe('POST')
+      sentOrigin = route.request().headers().origin
+      await route.fulfill({ contentType: 'text/html', body: '<h1>Account action received</h1>' })
+    })
+    await page.goto('/app')
+    await page.getByRole('button', { name: action.button, exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Account action received' })).toBeVisible()
+    expect(sentOrigin, action.path).toBe('http://localhost:8787')
+    await page.unroute('**/api/account')
+  }
+})

@@ -15,8 +15,6 @@
 
 /app
   Cache-Control: no-store
-  Referrer-Policy: no-referrer
 
 /app.html
   Cache-Control: no-store
-  Referrer-Policy: no-referrer
