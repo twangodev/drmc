@@ -1,17 +1,18 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { AccountView } from '../../src/lib/account'
+import type { AccountView, SyncEvent } from '../../src/lib/account'
+import { defaultMusicPreferences, type MusicPreferences } from '../../src/lib/music-preferences'
+import { musicObservationLifetimeMs, sameMusicTrack } from '../../src/lib/music'
 import { CredentialVault } from '../../src/lib/server/accounts/credentials'
 import { requireServiceConfiguration, type ServiceSettings } from '../../src/lib/server/accounts/configuration'
 import { randomToken } from '../../src/lib/server/oauth/attempts'
 import { DiscordOAuthClient, DiscordOAuthFailure, discordPresenceScopes, type DiscordAuthorization, type DiscordTokens } from '../../src/lib/server/discord/oauth'
 import { openDiscordPresence, DiscordGatewayFailure, type LiveDiscordPresence } from '../../src/lib/server/discord/gateway'
 import { DiscordArtwork } from '../../src/lib/server/discord/artwork'
+import { musicActivity } from '../../src/lib/server/discord/music-activity'
 import { LastfmClient, LastfmFailure, type LastfmSession, type ListeningTrack } from '../../src/lib/server/lastfm/client'
 import { connectDiscordGateway } from './discord-gateway'
 
 interface Credentials { discord: DiscordTokens; lastfm?: LastfmSession }
-const musicPollIntervalMs = 15_000
-const presenceStaleAfterMs = 120_000
 const lastfmVerificationIntervalMs = 15 * 60_000
 interface AccountRecord {
   userId: string
@@ -27,6 +28,11 @@ interface AccountRecord {
   lastfmVerifiedAt?: number
   failure?: string
   failures: number
+  preferences?: MusicPreferences
+  nextCheckAt?: number
+  publishedAt?: number
+  events?: SyncEvent[]
+  pollNotBefore?: number
 }
 
 export class MusicAccount extends DurableObject<ServiceSettings> {
@@ -45,15 +51,20 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
     return this.serial(async () => {
       this.stopPresence()
       const previous = this.record && this.record.userId === authorization.userId ? await this.readCredentials() : undefined
+      const previousRecord = previous?.lastfm ? this.record : undefined
       const nonce = randomToken()
       this.record = {
         userId: authorization.userId, session: nonce,
         credentials: await this.vault().seal({ discord: tokens, ...(previous?.lastfm ? { lastfm: previous.lastfm } : {}) }, `credentials:${authorization.userId}`),
         expiresAt: Date.parse(authorization.expiresAt), lastfmUsername: previous?.lastfm?.username,
-        enabled: this.record?.enabled ?? true, status: this.record?.enabled === false ? 'paused' : previous?.lastfm ? 'reconnecting' : 'link_lastfm', track: null, failures: 0,
+        enabled: this.record?.enabled ?? true, status: this.record?.enabled === false ? 'paused' : previous?.lastfm ? 'reconnecting' : 'link_lastfm',
+        track: previousRecord?.track ?? null, trackStartedAt: previousRecord?.trackStartedAt, lastCheckedAt: previousRecord?.lastCheckedAt,
+        lastfmVerifiedAt: previousRecord?.lastfmVerifiedAt, pollNotBefore: previousRecord?.pollNotBefore, failures: 0,
+        preferences: this.preferences(),
+        events: previousRecord?.events, publishedAt: previousRecord?.publishedAt,
       }
-      await this.save()
       if (previous?.lastfm && this.record.enabled) await this.schedule(1)
+      await this.save()
       return nonce
     })
   }
@@ -64,18 +75,34 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
       const credentials = await this.readCredentials()
       credentials.lastfm = session
       await this.storeCredentials(credentials)
+      this.stopPresence()
+      this.record!.track = null
+      delete this.record!.trackStartedAt
       this.record!.lastfmUsername = session.username
       this.record!.status = this.record!.enabled ? 'reconnecting' : 'paused'
       this.record!.failures = 0
       delete this.record!.lastfmVerifiedAt
+      delete this.record!.pollNotBefore
       delete this.record!.failure
-      await this.save()
       if (this.record!.enabled) await this.schedule(1)
+      await this.save()
     })
   }
 
   view(nonce: string): Promise<AccountView | null> {
     return this.serial(async () => this.validSession(nonce) ? this.publicView() : null)
+  }
+
+  updatePreferences(nonce: string, preferences: MusicPreferences): Promise<void> {
+    return this.serial(async () => {
+      this.requireSession(nonce)
+      const record = this.record!
+      record.preferences = preferences
+      if (!preferences.debug) record.events = []
+      this.observe('preferences_saved')
+      if (record.enabled && record.lastfmUsername && !['reauthorize', 'lastfm_reauthorize', 'cleanup_pending'].includes(record.status)) await this.schedule(1)
+      await this.save()
+    })
   }
 
   control(nonce: string, action: 'pause' | 'resume' | 'disconnect' | 'logout'): Promise<AccountView | null> {
@@ -102,7 +129,8 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
         record.status = record.enabled ? (record.lastfmUsername ? 'reconnecting' : 'link_lastfm') : 'paused'
         record.failures = 0
         delete record.failure
-        if (!record.enabled) { this.stopPresence(); record.track = null; await this.ctx.storage.deleteAlarm() }
+        this.observe(record.enabled ? 'resumed' : 'paused')
+        if (!record.enabled) { this.stopPresence(); record.track = null; delete record.trackStartedAt; delete record.nextCheckAt; await this.ctx.storage.deleteAlarm() }
         else if (record.lastfmUsername) await this.schedule(1)
       }
       await this.save()
@@ -121,65 +149,115 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
 
   private async synchronize(): Promise<void> {
     const record = this.record!
-    let retryMs = musicPollIntervalMs + Math.floor(Math.random() * 3000)
+    if (await this.deferLastfmRetry()) return
+    delete record.pollNotBefore
+    let retryMs = this.preferences().refreshInterval * 1000
     try {
-      const credentials = await this.readCredentials()
-      if (record.expiresAt <= Date.now() + 120_000) {
-        this.stopPresence()
-        credentials.discord = await this.oauth().refresh(credentials.discord.refreshToken)
-        await this.storeCredentials(credentials)
-        const authorization = await this.oauth().inspect(credentials.discord.accessToken)
-        if (!discordPresenceScopes.every(scope => authorization.scopes.includes(scope))) throw new DiscordOAuthFailure('inspect', 403, 'presence_scope_missing')
-        if (authorization.userId !== record.userId) throw new DiscordOAuthFailure('inspect', 403, 'account_mismatch')
-        record.expiresAt = Date.parse(authorization.expiresAt)
-        await this.save()
-      }
-      const configuration = requireServiceConfiguration(this.env)
-      const lastfm = new LastfmClient(configuration.lastfm.key, configuration.lastfm.secret)
-      if (Date.now() - (record.lastfmVerifiedAt ?? 0) >= lastfmVerificationIntervalMs) {
-        if (!credentials.lastfm) throw new LastfmFailure('authorization_failed')
-        await lastfm.verifySession(credentials.lastfm)
-        record.lastfmVerifiedAt = Date.now()
-      }
-      const track = await lastfm.nowPlaying(record.lastfmUsername!)
-      const changed = track?.title !== record.track?.title || track?.artist !== record.track?.artist || track?.album !== record.track?.album
-      record.lastCheckedAt = Date.now()
-      if (changed) record.trackStartedAt = track ? Date.now() : undefined
-      record.track = track
-      if (track) {
-        await this.ensurePresence(credentials.discord.accessToken)
-        const asset = track.artwork ? await this.artwork.resolve(configuration.discord.clientId, credentials.discord.accessToken, track.artwork) : undefined
-        const activity = {
-          name: 'Last.fm', type: 2 as const, details: track.title, state: `by ${track.artist}`.slice(0, 128),
-          timestamps: { start: record.trackStartedAt ?? Date.now() },
-          ...(asset ? { assets: { large_image: asset, large_text: track.album || track.title } } : {}),
-        }
-        const payload = JSON.stringify(activity)
-        if (this.published !== payload) { this.live!.update(activity); this.published = payload }
-        record.status = 'listening'
-      } else { this.stopPresence(); record.status = 'idle' }
+      const credentials = await this.refreshDiscordGrant()
+      this.rememberMusic(await this.readCurrentMusic(credentials))
+      await this.publishMusic(credentials.discord.accessToken)
+      record.status = record.track ? 'listening' : 'idle'
+      if (record.failures) this.observe('recovered')
       record.failures = 0
       delete record.failure
-    } catch (error) {
-      record.failures++
-      record.failure = error instanceof LastfmFailure ? `lastfm_${error.reason}` : error instanceof DiscordOAuthFailure ? `discord_${error.reason}` : error instanceof DiscordGatewayFailure ? `discord_${error.diagnostic.reason}` : 'sync_unavailable'
-      const denied = error instanceof DiscordOAuthFailure && [400, 401, 403].includes(error.status ?? 0) && error.reason !== 'rate_limited'
-        || error instanceof DiscordGatewayFailure && (error.diagnostic.closeCode === 4004 || error.diagnostic.reason === 'gateway_account_mismatch')
-      const lastfmDenied = error instanceof LastfmFailure && error.reason === 'authorization_failed'
-      record.status = denied ? 'reauthorize' : lastfmDenied ? 'lastfm_reauthorize' : 'reconnecting'
-      if (denied || lastfmDenied || Date.now() - (record.lastCheckedAt ?? 0) >= presenceStaleAfterMs) { this.stopPresence(); record.track = null }
-      retryMs = Math.min(60_000, 15_000 * 2 ** Math.min(record.failures, 3)) + Math.floor(Math.random() * 3000)
-      if (record.track && record.lastCheckedAt) retryMs = Math.min(retryMs, Math.max(1000, record.lastCheckedAt + presenceStaleAfterMs - Date.now()))
-    }
-    await this.save()
+    } catch (error) { retryMs = this.retryFailedSync(error) }
     if (record.enabled && !['reauthorize', 'lastfm_reauthorize'].includes(record.status)) await this.schedule(retryMs)
+    else { delete record.nextCheckAt; await this.ctx.storage.deleteAlarm() }
+    await this.save()
   }
+
+  private async deferLastfmRetry(): Promise<boolean> {
+    const record = this.record!
+    if (!record.pollNotBefore || record.pollNotBefore <= Date.now()) return false
+    if (Date.now() - (record.lastCheckedAt ?? 0) >= musicObservationLifetimeMs) this.clearMusic()
+    const delay = record.pollNotBefore - Date.now()
+    await this.schedule(this.live ? Math.min(delay, this.timeUntilMusicExpires()) : delay)
+    await this.save()
+    return true
+  }
+
+  private async refreshDiscordGrant(): Promise<Credentials> {
+    const credentials = await this.readCredentials()
+    const record = this.record!
+    if (record.expiresAt > Date.now() + 120_000) return credentials
+    this.stopPresence()
+    credentials.discord = await this.oauth().refresh(credentials.discord.refreshToken)
+    await this.storeCredentials(credentials)
+    const authorization = await this.oauth().inspect(credentials.discord.accessToken)
+    if (!discordPresenceScopes.every(scope => authorization.scopes.includes(scope))) throw new DiscordOAuthFailure('inspect', 403, 'presence_scope_missing')
+    if (authorization.userId !== record.userId) throw new DiscordOAuthFailure('inspect', 403, 'account_mismatch')
+    record.expiresAt = Date.parse(authorization.expiresAt)
+    await this.save()
+    return credentials
+  }
+
+  private async readCurrentMusic(credentials: Credentials): Promise<ListeningTrack | null> {
+    const record = this.record!
+    const configuration = requireServiceConfiguration(this.env)
+    const lastfm = new LastfmClient(configuration.lastfm.key, configuration.lastfm.secret)
+    if (Date.now() - (record.lastfmVerifiedAt ?? 0) >= lastfmVerificationIntervalMs) {
+      if (!credentials.lastfm) throw new LastfmFailure('authorization_failed')
+      await lastfm.verifySession(credentials.lastfm)
+      record.lastfmVerifiedAt = Date.now()
+    }
+    return lastfm.nowPlaying(record.lastfmUsername!)
+  }
+
+  private rememberMusic(track: ListeningTrack | null): void {
+    const record = this.record!
+    const checkedAt = Date.now()
+    const changed = !sameMusicTrack(track, record.track) || checkedAt - (record.lastCheckedAt ?? 0) >= musicObservationLifetimeMs
+    record.lastCheckedAt = checkedAt
+    if (changed || !record.trackStartedAt) record.trackStartedAt = track ? checkedAt : undefined
+    if (track) track.startedAt = record.trackStartedAt
+    record.track = track
+    this.observe('poll')
+  }
+
+  private async publishMusic(accessToken: string): Promise<void> {
+    const record = this.record!
+    const preferences = this.preferences()
+    if (!record.track && !preferences.keepStatus) { this.stopPresence(); return }
+    await this.ensurePresence(accessToken)
+    const applicationId = requireServiceConfiguration(this.env).discord.clientId
+    const cover = preferences.showCovers && record.track?.artwork ? await this.artwork.resolve(applicationId, accessToken, record.track.artwork) : undefined
+    const images = await this.artwork.applicationAssets(applicationId)
+    const activity = musicActivity(record.track, record.lastfmUsername!, preferences, { ...images, applicationId, cover })!
+    const payload = JSON.stringify(activity)
+    if (this.published === payload) return
+    this.live!.update(activity)
+    this.published = payload
+    record.publishedAt = Date.now()
+    this.observe('published')
+  }
+
+  private retryFailedSync(error: unknown): number {
+    const record = this.record!
+    record.failures++
+    record.failure = error instanceof LastfmFailure ? `lastfm_${error.reason}` : error instanceof DiscordOAuthFailure ? `discord_${error.reason}` : error instanceof DiscordGatewayFailure ? `discord_${error.diagnostic.reason}` : 'sync_unavailable'
+    this.observe('failed', record.failure)
+    const denied = error instanceof DiscordOAuthFailure && [400, 401, 403].includes(error.status ?? 0) && error.reason !== 'rate_limited'
+      || error instanceof DiscordGatewayFailure && (error.diagnostic.closeCode === 4004 || error.diagnostic.reason === 'gateway_account_mismatch')
+    const lastfmDenied = error instanceof LastfmFailure && error.reason === 'authorization_failed'
+    record.status = denied ? 'reauthorize' : lastfmDenied ? 'lastfm_reauthorize' : 'reconnecting'
+    if (denied || lastfmDenied || Date.now() - (record.lastCheckedAt ?? 0) >= musicObservationLifetimeMs) this.clearMusic()
+    let delay = Math.min(60_000, 15_000 * 2 ** Math.min(record.failures, 3)) + Math.floor(Math.random() * 3000)
+    if (error instanceof LastfmFailure && error.retryAfterMs) {
+      record.pollNotBefore = Date.now() + error.retryAfterMs
+      delay = Math.max(delay, error.retryAfterMs)
+    }
+    return this.live ? Math.min(delay, this.timeUntilMusicExpires()) : delay
+  }
+
+  private timeUntilMusicExpires(): number { return Math.max(1000, (this.record!.lastCheckedAt ?? 0) + musicObservationLifetimeMs - Date.now()) }
+  private clearMusic(): void { this.stopPresence(); this.record!.track = null; delete this.record!.trackStartedAt }
 
   private async ensurePresence(accessToken: string): Promise<void> {
     if (this.live) return
     const live = await openDiscordPresence(connectDiscordGateway, { applicationId: this.env.DISCORD_CLIENT_ID!, userId: this.record!.userId, accessToken })
     this.live = live
     this.published = undefined
+    this.observe('connected')
     this.ctx.waitUntil(live.closed.then(report => this.serial(async () => {
       if (this.live !== live) return
       this.live = undefined
@@ -187,8 +265,10 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
       if (!this.record?.enabled) return
       this.record.status = report.failure?.closeCode === 4004 ? 'reauthorize' : 'reconnecting'
       this.record.failure = `discord_${report.failure?.reason ?? 'gateway_closed'}`
+      this.observe('disconnected', this.record.failure)
+      if (this.record.status !== 'reauthorize') await this.schedule(this.preferences().refreshInterval * 1000)
+      else { delete this.record.nextCheckAt; await this.ctx.storage.deleteAlarm() }
       await this.save()
-      if (this.record.status !== 'reauthorize') await this.schedule(15_000)
     })))
   }
 
@@ -215,8 +295,15 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
   private publicView(): AccountView {
     const record = this.record!
     return { userId: record.userId, lastfmUsername: record.lastfmUsername, enabled: record.enabled, connected: Boolean(this.live), status: record.status,
-      track: record.track ? { title: record.track.title, artist: record.track.artist, album: record.track.album } : null,
-      lastCheckedAt: record.lastCheckedAt, failure: record.failure }
+      track: record.track, preferences: this.preferences(),
+      lastCheckedAt: record.lastCheckedAt, nextCheckAt: record.nextCheckAt, publishedAt: record.publishedAt,
+      consecutiveFailures: record.failures, events: this.preferences().debug ? record.events ?? [] : [], failure: record.failure }
+  }
+  private preferences(): MusicPreferences { return { ...defaultMusicPreferences, ...this.record?.preferences } }
+  private observe(event: SyncEvent['event'], reason?: string): void {
+    if (!this.record || !this.preferences().debug) return
+    const entry: SyncEvent = { at: Date.now(), event, ...(reason && /^[a-z_]{1,64}$/.test(reason) ? { reason } : {}) }
+    this.record.events = [...(this.record.events ?? []), entry].slice(-20)
   }
   private validSession(nonce: string): boolean { return Boolean(this.record && this.record.session === nonce) }
   private requireSession(nonce: string): void { if (!this.validSession(nonce)) throw new Error('Invalid browser session') }
@@ -225,7 +312,10 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
   private readCredentials(): Promise<Credentials> { return this.vault().open(this.record!.credentials, `credentials:${this.record!.userId}`) }
   private async storeCredentials(credentials: Credentials): Promise<void> { this.record!.credentials = await this.vault().seal(credentials, `credentials:${this.record!.userId}`) }
   private save(): Promise<void> { return this.ctx.storage.put('account', this.record!) }
-  private schedule(delay: number): Promise<void> { return this.ctx.storage.setAlarm(Date.now() + delay) }
+  private async schedule(delay: number): Promise<void> {
+    this.record!.nextCheckAt = Date.now() + delay
+    await this.ctx.storage.setAlarm(this.record!.nextCheckAt)
+  }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.queue.then(operation)
     this.queue = result.catch(() => {})

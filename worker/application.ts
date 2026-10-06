@@ -5,6 +5,7 @@ import { LastfmClient, isLastfmCredential } from '../src/lib/server/lastfm/clien
 import { randomToken, hashToken, isAuthorizationToken, authorizationLifetimeMs, type AuthorizationAttempt, type AuthorizationAttemptStore } from '../src/lib/server/oauth/attempts'
 import type { MusicAccount } from './cloudflare/music-account'
 import { readBrowserSession, readCookie, cookie, browserSessionLifetimeSeconds, type BrowserSession } from './browser-session'
+import { InvalidMusicPreferences, readMusicPreferences } from '../src/lib/music-preferences'
 
 interface ServiceDependencies {
   attempts: AuthorizationAttemptStore
@@ -76,6 +77,12 @@ export async function handleServiceRequest(request: Request, settings: ServiceSe
         const lastfm = await new LastfmClient(configuration.lastfm.key, configuration.lastfm.secret).exchange(token)
         await actor(session.userId).linkLastfm(session.nonce, lastfm)
         response = redirect('/app')
+      } else if (request.method === 'POST' && url.pathname === '/api/account/preferences') {
+        if (!session || !account) throw new BrowserRequestFailure(401, 'sign_in_required')
+        const body = await request.text()
+        if (body.length > 2048) throw new BrowserRequestFailure(400, 'invalid_music_preferences')
+        await actor(session.userId).updatePreferences(session.nonce, readMusicPreferences(new URLSearchParams(body)))
+        response = redirect('/app?saved=preferences')
       } else if (request.method === 'POST' && /^\/api\/account\/(pause|resume|disconnect|logout)$/.test(url.pathname)) {
         if (!session || !account) throw new BrowserRequestFailure(401, 'sign_in_required')
         const action = url.pathname.split('/').at(-1)! as 'pause' | 'resume' | 'disconnect' | 'logout'
@@ -85,8 +92,8 @@ export async function handleServiceRequest(request: Request, settings: ServiceSe
       } else response = Response.json({ error: 'not_found' }, { status: 404 })
     }
   } catch (error) {
-    const reason = error instanceof BrowserRequestFailure ? error.message : url.pathname.startsWith('/auth/lastfm/') ? 'lastfm_authorization_failed' : url.pathname.startsWith('/auth/discord/') ? 'discord_authorization_failed' : 'service_unavailable'
-    response = url.pathname.endsWith('/callback') ? redirect(`/app?error=${reason}`) : Response.json({ error: reason }, { status: error instanceof BrowserRequestFailure ? error.status : 503 })
+    const reason = error instanceof BrowserRequestFailure ? error.message : error instanceof InvalidMusicPreferences ? error.message : url.pathname.startsWith('/auth/lastfm/') ? 'lastfm_authorization_failed' : url.pathname.startsWith('/auth/discord/') ? 'discord_authorization_failed' : 'service_unavailable'
+    response = url.pathname.endsWith('/callback') || url.pathname === '/api/account/preferences' ? redirect(`/app?error=${reason}`) : Response.json({ error: reason }, { status: error instanceof BrowserRequestFailure ? error.status : 503 })
   }
   if (url.pathname.endsWith('/callback')) response.headers.append('Set-Cookie', cookie('drmc_auth', '', 0, url.origin, '/auth'))
   response.headers.set('Cache-Control', 'no-store')

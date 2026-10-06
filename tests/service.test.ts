@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { test, type TestContext } from 'node:test'
 import { Miniflare, Response as RuntimeResponse, WebSocketPair, type Request as RuntimeRequest } from 'miniflare'
+import { defaultMusicPreferences, type MusicPreferences } from '../src/lib/music-preferences.ts'
+import type { AccountView } from '../src/lib/account.ts'
 
 const origin = 'https://drmc.test'
 const userId = '234567890123456789'
@@ -12,6 +14,10 @@ const encryptionKey = 'd'.repeat(64)
 
 class Providers {
   playing = true
+  loved = false
+  lastfmUsername = 'twangodev'
+  artworkRequests = 0
+  retryAfter?: string
   lastfmFailure = false
   lastfmSessionRevoked = false
   revocationFailure = false
@@ -52,15 +58,17 @@ class Providers {
       if (parameters.get('method') === 'auth.getSession') {
         this.lastfmExchanges++
         assert.equal(parameters.get('token'), 'CallbackToken_Z'.repeat(3))
-        return RuntimeResponse.json({ session: { name: 'twangodev', key: 'SessionKey_Z'.repeat(3) } })
+        return RuntimeResponse.json({ session: { name: this.lastfmUsername, key: 'SessionKey_Z'.repeat(3) } })
       }
-      if (parameters.get('method') === 'user.getInfo') return RuntimeResponse.json(this.lastfmSessionRevoked ? { error: 9 } : { user: { name: 'twangodev' } }, { status: this.lastfmSessionRevoked ? 403 : 200 })
+      if (parameters.get('method') === 'user.getInfo') return RuntimeResponse.json(this.lastfmSessionRevoked ? { error: 9 } : { user: { name: this.lastfmUsername } }, { status: this.lastfmSessionRevoked ? 403 : 200 })
+      assert.equal(parameters.get('user'), this.lastfmUsername)
       this.polls++
-      if (this.lastfmFailure) return RuntimeResponse.json({ error: 29, message: 'PRIVATE PROVIDER ERROR' })
-      return RuntimeResponse.json({ recenttracks: { track: this.playing ? [{ name: 'Kid A', artist: { name: 'Radiohead' }, album: { '#text': 'Kid A' }, image: [{ '#text': 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png' }], '@attr': { nowplaying: 'true' } }] : [] } })
+      if (this.lastfmFailure) return RuntimeResponse.json({ error: 29, message: 'PRIVATE PROVIDER ERROR' }, { headers: this.retryAfter ? { 'Retry-After': this.retryAfter } : {} })
+      return RuntimeResponse.json({ recenttracks: { track: this.playing ? [{ name: 'Kid A', artist: { name: 'Radiohead' }, album: { '#text': 'Kid A' }, loved: this.loved ? '1' : '0', image: [{ '#text': 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png' }], '@attr': { nowplaying: 'true' } }] : [] } })
     }
     assert.equal(url.origin, 'https://discord.com')
-    if (url.pathname.endsWith('/external-assets')) return RuntimeResponse.json([{ external_asset_path: 'external/artwork.png' }])
+    if (url.pathname === `/api/v9/oauth2/applications/${applicationId}/assets`) return RuntimeResponse.json([{ id: '970027358432161832', name: 'lfm_logo' }, { id: '970173669169053717', name: 'heart' }])
+    if (url.pathname.endsWith('/external-assets')) { this.artworkRequests++; return RuntimeResponse.json([{ external_asset_path: 'external/artwork.png' }]) }
     if (url.pathname === '/api/v10/oauth2/@me') return RuntimeResponse.json({ application: { id: applicationId }, user: { id: userId }, scopes: ['identify', 'openid', 'sdk.social_layer_presence'], expires: new Date(this.discordExpires).toISOString() })
     const parameters = new URLSearchParams(await request.text())
     if (url.pathname.endsWith('/revoke')) {
@@ -96,8 +104,15 @@ function createRuntime(context: TestContext) {
 function cookies(response: { headers: { getSetCookie(): string[] } }): string[] {
   return response.headers.getSetCookie().map(value => value.split(';')[0]!)
 }
-function post(runtime: Miniflare, path: string, browserCookies: string[] = []) {
-  return runtime.dispatchFetch(origin + path, { method: 'POST', redirect: 'manual', headers: { Origin: origin, Cookie: browserCookies.join('; ') } })
+function post(runtime: Miniflare, path: string, browserCookies: string[] = [], body?: URLSearchParams) {
+  return runtime.dispatchFetch(origin + path, { method: 'POST', body, redirect: 'manual', headers: { Origin: origin, Cookie: browserCookies.join('; ') } })
+}
+function preferencesForm(preferences: MusicPreferences) {
+  return new URLSearchParams(Object.entries(preferences).flatMap(([key, value]) => value === true ? [[key, 'on']] : value === false ? [] : [[key, String(value)]]))
+}
+async function savePreferences(runtime: Miniflare, browserCookies: string[], preferences: MusicPreferences) {
+  const response = await post(runtime, '/api/account/preferences', browserCookies, preferencesForm(preferences))
+  assert.equal(response.headers.get('Location'), '/app?saved=preferences')
 }
 async function signIn(runtime: Miniflare) {
   const start = await post(runtime, '/auth/discord/start')
@@ -120,7 +135,7 @@ async function linkLastfm(runtime: Miniflare, session: string[]) {
 async function account(runtime: Miniflare, session: string[]) {
   const response = await runtime.dispatchFetch(`${origin}/api/account`, { headers: { Cookie: session.join('; ') } })
   assert.equal(response.headers.get('Cache-Control'), 'no-store')
-  return await response.json() as { account: { status: string; connected: boolean; track: unknown; enabled: boolean; lastfmUsername?: string } | null }
+  return await response.json() as { account: AccountView | null }
 }
 async function eventually(condition: () => boolean | Promise<boolean>, timeout = 6000) {
   const deadline = Date.now() + timeout
@@ -255,4 +270,114 @@ test('incomplete Last.fm callbacks are distinguished from explicit cancellation 
   }
   assert.equal(providers.lastfmExchanges, 0)
   assert.equal((await account(runtime, session.cookies)).account!.status, 'link_lastfm')
+})
+
+test('saved CLI preferences change live activities, preserve elapsed time, and persist through sign-in and pause', async context => {
+  const { runtime, providers } = createRuntime(context)
+  const session = await signIn(runtime)
+  assert.deepEqual((await account(runtime, session.cookies)).account!.preferences, defaultMusicPreferences)
+  providers.loved = true
+  const preferences = { ...defaultMusicPreferences, refreshInterval: 1, showLoved: true, showProfile: false, showCovers: false, showElapsed: false, keepStatus: true, debug: true }
+  await savePreferences(runtime, session.cookies, preferences)
+  await linkLastfm(runtime, session.cookies)
+  await eventually(() => providers.activity !== null)
+  assert.deepEqual(providers.activity!.buttons, [{ label: 'View scrobble on Last.fm', url: 'https://www.last.fm/music/Radiohead/_/Kid%20A' }])
+  assert.equal(providers.activity!.application_id, applicationId)
+  assert.deepEqual(providers.activity!.assets, { small_image: '970173669169053717', small_text: 'DRMC • 1.0.0' })
+  assert.equal(providers.activity!.timestamps, undefined)
+  assert.equal(providers.artworkRequests, 0)
+  const firstObservation = (await account(runtime, session.cookies)).account!.track!.startedAt
+  const timed = { ...preferences, showElapsed: true }
+  await savePreferences(runtime, session.cookies, timed)
+  await eventually(() => (providers.activity!.timestamps as { start: number } | undefined)?.start === firstObservation)
+  await eventually(() => providers.polls >= 3)
+  assert.equal((await account(runtime, session.cookies)).account!.track!.startedAt, firstObservation)
+  const signedInAgain = await signIn(runtime)
+  await eventually(() => providers.publications.length >= 3)
+  assert.equal((providers.publications.at(-1)!.timestamps as { start: number }).start, firstObservation)
+  assert.deepEqual((await account(runtime, signedInAgain.cookies)).account!.preferences, timed)
+  assert.equal((await account(runtime, session.cookies)).account, null)
+  await post(runtime, '/api/account/pause', signedInAgain.cookies)
+  await savePreferences(runtime, signedInAgain.cookies, { ...timed, showProfile: true })
+  const paused = (await account(runtime, signedInAgain.cookies)).account!
+  assert.equal(paused.status, 'paused')
+  assert.equal(paused.nextCheckAt, undefined)
+  assert.equal(paused.enabled, false)
+  await eventually(() => providers.activity === null)
+})
+
+test('keep-status publishes a clean idle activity and disabling it clears Discord without disconnecting accounts', async context => {
+  const { runtime, providers } = createRuntime(context)
+  providers.playing = false
+  const session = await signIn(runtime)
+  await savePreferences(runtime, session.cookies, { ...defaultMusicPreferences, keepStatus: true })
+  await linkLastfm(runtime, session.cookies)
+  await eventually(() => providers.activity?.type === 0)
+  assert.deepEqual(providers.activity, { name: 'Last.fm', application_id: applicationId, type: 0, details: 'DRMC', state: '1.0.0', assets: { large_image: '970027358432161832' } })
+  assert.equal((await account(runtime, session.cookies)).account!.status, 'idle')
+  await savePreferences(runtime, session.cookies, { ...defaultMusicPreferences })
+  await eventually(() => providers.activity === null)
+  const idle = (await account(runtime, session.cookies)).account!
+  assert.equal(idle.status, 'idle')
+  assert.equal(idle.lastfmUsername, 'twangodev')
+  assert.equal(idle.enabled, true)
+  await post(runtime, '/api/account/pause', session.cookies)
+})
+
+test('preferences reject invalid input and cross-site or anonymous changes without changing saved settings', async context => {
+  const { runtime } = createRuntime(context)
+  const session = await signIn(runtime)
+  for (const refreshInterval of ['0', '1.5', '3601', 'invalid']) {
+    const response = await post(runtime, '/api/account/preferences', session.cookies, new URLSearchParams({ refreshInterval }))
+    assert.equal(response.headers.get('Location'), '/app?error=invalid_music_preferences')
+  }
+  const forged = await runtime.dispatchFetch(origin + '/api/account/preferences', { method: 'POST', redirect: 'manual', headers: { Origin: 'https://attacker.test', Cookie: session.cookies.join('; ') }, body: preferencesForm({ ...defaultMusicPreferences, showLoved: true }) })
+  assert.equal(forged.headers.get('Location'), '/app?error=invalid_origin')
+  const anonymous = await post(runtime, '/api/account/preferences', [], preferencesForm({ ...defaultMusicPreferences }))
+  assert.equal(anonymous.headers.get('Location'), '/app?error=sign_in_required')
+  assert.deepEqual((await account(runtime, session.cookies)).account!.preferences, defaultMusicPreferences)
+})
+
+test('diagnostics are bounded, redact provider failures, and honor Retry-After after settings change', async context => {
+  const { runtime, providers } = createRuntime(context)
+  const session = await signIn(runtime)
+  const preferences = { ...defaultMusicPreferences, refreshInterval: 1, debug: true }
+  await savePreferences(runtime, session.cookies, preferences)
+  await linkLastfm(runtime, session.cookies)
+  await eventually(() => providers.activity !== null)
+  providers.lastfmFailure = true
+  providers.retryAfter = '300'
+  await savePreferences(runtime, session.cookies, preferences)
+  await eventually(async () => (await account(runtime, session.cookies)).account!.status === 'reconnecting')
+  const polls = providers.polls
+  for (let count = 0; count < 22; count++) await savePreferences(runtime, session.cookies, preferences)
+  await delay(100)
+  assert.equal(providers.polls, polls)
+  const view = (await account(runtime, session.cookies)).account!
+  assert.equal(view.events.length, 20)
+  assert.equal(view.failure, 'lastfm_rate_limited')
+  assert.equal(/PRIVATE|access-token|refresh-token|credentials|SessionKey/.test(JSON.stringify(view)), false)
+  await savePreferences(runtime, session.cookies, { ...preferences, debug: false })
+  assert.deepEqual((await account(runtime, session.cookies)).account!.events, [])
+  await post(runtime, '/api/account/pause', session.cookies)
+})
+
+test('changing the verified Last.fm account stops the old activity and retains presence preferences', async context => {
+  const { runtime, providers } = createRuntime(context)
+  const session = await signIn(runtime)
+  const preferences = { ...defaultMusicPreferences, showLoved: true }
+  await savePreferences(runtime, session.cookies, preferences)
+  await linkLastfm(runtime, session.cookies)
+  await eventually(() => providers.activity !== null)
+  const firstStart = (providers.activity!.timestamps as { start: number }).start
+  providers.lastfmUsername = 'another-listener'
+  await linkLastfm(runtime, session.cookies)
+  await eventually(() => providers.connections === 2)
+  await eventually(() => providers.publications.length === 2)
+  const view = (await account(runtime, session.cookies)).account!
+  assert.equal(view.lastfmUsername, 'another-listener')
+  assert.deepEqual(view.preferences, preferences)
+  assert.ok((providers.activity!.timestamps as { start: number }).start > firstStart)
+  assert.deepEqual((providers.activity!.buttons as { label: string; url: string }[])[0], { label: 'Visit last.fm Profile', url: 'https://www.last.fm/user/another-listener' })
+  await post(runtime, '/api/account/pause', session.cookies)
 })
