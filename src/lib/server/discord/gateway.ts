@@ -4,6 +4,7 @@ import {
   identifyGateway,
   presenceProbeDurationMs,
   updateGatewayPresence,
+  type DiscordActivity,
 } from './gateway-protocol.ts'
 
 export interface GatewayConnection {
@@ -69,7 +70,8 @@ export class DiscordGatewayPresence implements DiscordPresencePublisher {
 }
 
 interface GatewayProbeTiming {
-  holdMs?: number
+  holdMs?: number | null
+  activity?: DiscordActivity | null
   handshakeTimeoutMs?: number
   heartbeatJitter?: () => number
 }
@@ -90,6 +92,24 @@ class GatewayProbeSession {
   private finished = false
   private disconnected = false
   private resolve?: (report: GatewayProbeReport) => void
+  private resolveReady?: () => void
+
+  async open(): Promise<LiveDiscordPresence> {
+    const ready = new Promise<void>(resolve => { this.resolveReady = resolve })
+    const closed = this.run()
+    await Promise.race([ready, closed.then(report => { throw new DiscordGatewayFailure(report.failure ?? { reason: 'gateway_closed' }) })])
+    return {
+      closed,
+      update: activity => this.update(activity),
+      close: () => this.finish(),
+    }
+  }
+
+  private update(activity: DiscordActivity | null): void {
+    if (this.finished || !this.report.connected) throw new DiscordGatewayFailure({ reason: 'gateway_closed' })
+    this.send(updateGatewayPresence(activity))
+    if (activity) this.report.activitySent = true
+  }
 
   constructor(socket: GatewayConnection, authorization: PresenceProbeAuthorization, timing: GatewayProbeTiming) {
     this.socket = socket
@@ -156,11 +176,14 @@ class GatewayProbeSession {
     const user = gatewayObject(gatewayObject(data)?.user)
     if (user?.id !== this.authorization.userId) throw new DiscordGatewayFailure({ reason: 'gateway_account_mismatch' })
     this.report.connected = true
-    this.send(updateGatewayPresence(true))
-    this.report.activitySent = true
+    if (this.timing.activity === undefined) {
+      this.send(updateGatewayPresence(true))
+      this.report.activitySent = true
+    } else if (this.timing.activity) this.update(this.timing.activity)
     this.startedAt = Date.now()
     if (this.deadlineTimer !== undefined) clearTimeout(this.deadlineTimer)
-    this.deadlineTimer = setTimeout(() => this.finish(), this.timing.holdMs ?? presenceProbeDurationMs)
+    if (this.timing.holdMs !== null) this.deadlineTimer = setTimeout(() => this.finish(), this.timing.holdMs ?? presenceProbeDurationMs)
+    this.resolveReady?.()
   }
 
   private heartbeat(scheduled: boolean): void {
@@ -207,6 +230,16 @@ class GatewayProbeSession {
     }
     this.resolve?.(this.report)
   }
+}
+
+export interface LiveDiscordPresence {
+  closed: Promise<GatewayProbeReport>
+  update(activity: DiscordActivity | null): void
+  close(): void
+}
+
+export async function openDiscordPresence(connect: () => Promise<GatewayConnection>, authorization: PresenceProbeAuthorization): Promise<LiveDiscordPresence> {
+  return new GatewayProbeSession(await connect(), authorization, { holdMs: null, activity: null }).open()
 }
 
 export function describeGatewayFailure(error: unknown): GatewayFailureDiagnostic {

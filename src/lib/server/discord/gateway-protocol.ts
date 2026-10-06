@@ -42,10 +42,20 @@ export function identifyGateway(applicationId: string, accessToken: string) {
   }
 }
 
-export function updateGatewayPresence(active: boolean) {
+export interface DiscordActivity {
+  name: string
+  type: 2
+  details: string
+  state: string
+  timestamps?: { start: number }
+  assets?: { large_image: string; large_text: string }
+}
+
+export function updateGatewayPresence(active: boolean | DiscordActivity | null) {
+  const activity = active === true ? presenceProbeActivity : active === false ? null : active
   return {
     op: 3,
-    d: { since: 0, activities: active ? [presenceProbeActivity] : [], status: 'online', afk: false },
+    d: { since: 0, activities: activity ? [activity] : [], status: 'online', afk: false },
   }
 }
 

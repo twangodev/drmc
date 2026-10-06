@@ -194,3 +194,18 @@ test('upgrade failures are sanitized before they reach the probe report', async 
   const network = new DiscordGatewayPresence(async () => { throw new Error('private-token-in-error') })
   assert.deepEqual((await network.testPresence(authorization)).failure, { reason: 'network_error' })
 })
+
+test('a persistent OAuth session accepts track changes and explicit idle clears', async () => {
+  const { openDiscordPresence } = await import('../src/lib/server/discord/gateway.ts')
+  const socket = new GatewayFixture()
+  const session = await openDiscordPresence(async () => socket, authorization)
+  assert.equal(socket.frames.some(frame => frame.op === 3), false)
+  session.update({ name: 'Last.fm', type: 2, details: 'Kid A', state: 'by Radiohead', timestamps: { start: 1234 } })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  session.update(null)
+  session.close()
+  const report = await session.closed
+  assert.equal(report.heartbeatAcknowledged, true)
+  assert.equal(report.clearSent, true)
+  assert.equal(socket.listenerCount, 0)
+})
