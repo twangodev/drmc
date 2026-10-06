@@ -275,10 +275,25 @@ test('denied consent consumes state without exchanging any code', async context 
   const attempt = await beginProbe(runtime)
   const denied = await callback(runtime, attempt, { error: 'access_denied' })
   assert.equal(denied.status, 400)
-  assert.deepEqual(await denied.json(), { error: 'authorization_denied' })
+  assert.deepEqual(await denied.json(), { error: 'authorization_denied', discord_error: 'access_denied' })
   assert.equal((await callback(runtime, attempt)).status, 400)
   assert.deepEqual(discord.requests, [])
 })
+
+for (const error of ['invalid_scope', 'invalid_request', 'invalid_client', 'server_error', 'private-unrecognized-provider-value']) {
+  test(`Discord callback error ${error} consumes state and returns only a recognized diagnostic`, async context => {
+    const { runtime, discord } = createRuntime(context)
+    const attempt = await beginProbe(runtime)
+    const response = await callback(runtime, attempt, { error, error_description: 'PRIVATE PROVIDER DESCRIPTION', code: 'private-code' })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), {
+      error: 'authorization_failed',
+      discord_error: error === 'private-unrecognized-provider-value' ? 'unknown_error' : error,
+    })
+    assert.equal((await callback(runtime, attempt)).status, 400)
+    assert.deepEqual(discord.requests, [])
+  })
+}
 
 test('unlisted accounts are rejected and their obtained grants revoked', async context => {
   const discord = new DiscordFixture()

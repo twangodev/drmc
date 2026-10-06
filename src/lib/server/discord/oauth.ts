@@ -1,3 +1,5 @@
+import { readDiscordOAuthError } from './oauth-errors'
+
 export const discordPresenceScopes = ['identify', 'openid', 'sdk.social_layer_presence'] as const
 
 export interface DiscordApplication {
@@ -175,10 +177,10 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 async function discordFailureReason(response: Response): Promise<string> {
-  const knownErrors = new Set(['invalid_scope', 'invalid_client', 'invalid_grant', 'access_denied', 'unsupported_grant_type'])
   try {
     const body = asObject(await response.json())
-    if (typeof body?.error === 'string' && knownErrors.has(body.error)) return body.error
+    const reason = readDiscordOAuthError(body?.error)
+    if (reason) return reason
   } catch {}
   return response.status === 429 ? 'rate_limited' : 'upstream_error'
 }

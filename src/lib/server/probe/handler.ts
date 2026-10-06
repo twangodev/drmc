@@ -1,4 +1,5 @@
 import { DiscordOAuthClient } from '../discord/oauth'
+import { readDiscordOAuthError } from '../discord/oauth-errors'
 import {
   authorizationLifetimeMs,
   hashToken,
@@ -22,7 +23,7 @@ export interface ProbeDependencies {
 }
 
 class ProbeRequestFailure extends Error {
-  constructor(readonly status: number, readonly reason: string) {
+  constructor(readonly status: number, readonly reason: string, readonly details: Record<string, string> = {}) {
     super(reason)
   }
 }
@@ -48,7 +49,7 @@ export async function handleProbeRequest(
     }
   } catch (error) {
     if (error instanceof ProbeRequestFailure) {
-      response = Response.json({ error: error.reason }, { status: error.status })
+      response = Response.json({ error: error.reason, ...error.details }, { status: error.status })
     } else if (error instanceof InvalidProbeConfiguration) {
       response = Response.json({ error: 'probe_not_configured', fields: error.fields }, { status: 503 })
     } else {
@@ -115,7 +116,12 @@ async function completeProbe(
     dependencies.now?.() ?? Date.now(),
   )
   if (!consumed) throw new ProbeRequestFailure(400, 'invalid_authorization_state')
-  if (parameters.has('error')) throw new ProbeRequestFailure(400, 'authorization_denied')
+  if (parameters.has('error')) {
+    const discordError = readDiscordOAuthError(parameters.get('error')) ?? 'unknown_error'
+    throw new ProbeRequestFailure(400, discordError === 'access_denied' ? 'authorization_denied' : 'authorization_failed', {
+      discord_error: discordError,
+    })
+  }
   const code = parameters.get('code')
   if (!code || code.length > 4096) throw new ProbeRequestFailure(400, 'invalid_authorization_code')
 
