@@ -22,12 +22,21 @@ export interface DiscordAuthorization {
 
 export type DiscordOperation = 'exchange' | 'inspect' | 'refresh' | 'revoke'
 
+export interface DiscordFailureDiagnostic {
+  reason: string
+  status: number | null
+}
+
+type DiscordCleanupResult =
+  | { status: 'revoked' }
+  | { status: 'failed'; failure: DiscordFailureDiagnostic }
+
 export class DiscordOAuthFailure extends Error {
   constructor(
     readonly operation: DiscordOperation,
     readonly status: number | null,
     readonly reason: string,
-    readonly cleanup?: 'revoked' | 'failed',
+    readonly cleanup?: DiscordCleanupResult,
   ) {
     super(`Discord ${operation} failed: ${reason}`)
     this.name = 'DiscordOAuthFailure'
@@ -90,10 +99,11 @@ export class DiscordOAuthClient {
     }
   }
 
-  async revoke(token: string, tokenType: 'refresh_token' | 'access_token' = 'refresh_token'): Promise<void> {
-    const response = await this.send('revoke', 'https://discord.com/api/oauth2/token/revoke', {
+  async revoke(token: string): Promise<void> {
+    const response = await this.send('revoke', 'https://discord.com/api/v10/oauth2/token/revoke', {
       method: 'POST',
-      body: this.authenticatedForm({ token, token_type_hint: tokenType }),
+      headers: { Authorization: this.clientAuthentication() },
+      body: new URLSearchParams({ token }),
     })
     await response.body?.cancel()
   }
@@ -118,16 +128,16 @@ export class DiscordOAuthClient {
     return { accessToken: body.access_token, refreshToken: body.refresh_token }
   }
 
-  private async revokeRecognizableToken(body: Record<string, unknown>): Promise<'revoked' | 'failed' | undefined> {
+  private async revokeRecognizableToken(body: Record<string, unknown>): Promise<DiscordCleanupResult | undefined> {
     const refreshToken = typeof body.refresh_token === 'string' && body.refresh_token ? body.refresh_token : null
     const accessToken = typeof body.access_token === 'string' && body.access_token ? body.access_token : null
     const token = refreshToken ?? accessToken
     if (!token) return undefined
     try {
-      await this.revoke(token, refreshToken ? 'refresh_token' : 'access_token')
-      return 'revoked'
-    } catch {
-      return 'failed'
+      await this.revoke(token)
+      return { status: 'revoked' }
+    } catch (error) {
+      return { status: 'failed', failure: describeDiscordFailure(error) }
     }
   }
 
@@ -137,6 +147,12 @@ export class DiscordOAuthClient {
       client_id: this.application.clientId,
       client_secret: this.application.clientSecret,
     })
+  }
+
+  private clientAuthentication(): string {
+    const clientId = encodeURIComponent(this.application.clientId)
+    const clientSecret = encodeURIComponent(this.application.clientSecret)
+    return `Basic ${btoa(`${clientId}:${clientSecret}`)}`
   }
 
   private async send(operation: DiscordOperation, url: string, init: RequestInit): Promise<Response> {
@@ -168,6 +184,12 @@ export class DiscordOAuthClient {
     if (!object) throw new DiscordOAuthFailure(operation, response.status, 'invalid_response')
     return object
   }
+}
+
+export function describeDiscordFailure(error: unknown): DiscordFailureDiagnostic {
+  return error instanceof DiscordOAuthFailure
+    ? { reason: error.reason, status: error.status }
+    : { reason: 'unexpected_error', status: null }
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {

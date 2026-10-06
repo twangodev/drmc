@@ -13,6 +13,8 @@ class DiscordFixture {
   exchangeStatus = 200
   refreshStatus = 200
   revokeStatus = 200
+  revokeError = 'private-provider-error'
+  redirectRevoke = false
   userId = allowedUserId
   application = applicationId
   redirectExchange = false
@@ -36,17 +38,25 @@ class DiscordFixture {
     assert.equal(request.method, 'POST')
     assert.equal(request.headers.get('Content-Type'), 'application/x-www-form-urlencoded;charset=UTF-8')
     const parameters = new URLSearchParams(await request.text())
-    assert.equal(parameters.get('client_id'), applicationId)
-    assert.equal(parameters.get('client_secret'), 'test-client-secret')
-
-    if (url.pathname === '/api/oauth2/token/revoke') {
+    if (url.pathname === '/api/v10/oauth2/token/revoke') {
       this.requests.push('revoke')
+      assert.equal(request.headers.get('Authorization'), `Basic ${btoa(`${applicationId}:test-client-secret`)}`)
+      assert.equal(parameters.get('client_id'), null)
+      assert.equal(parameters.get('client_secret'), null)
       assert.match(parameters.get('token') ?? '', /^(initial|refreshed)-refresh-token$/)
-      assert.equal(parameters.get('token_type_hint'), 'refresh_token')
+      assert.equal(parameters.get('token_type_hint'), null)
+      if (this.redirectRevoke) {
+        return new MiniflareResponse(null, { status: 302, headers: { Location: 'https://unexpected.test' } })
+      }
+      if (this.revokeStatus >= 400) {
+        return MiniflareResponse.json({ error: this.revokeError, error_description: 'PRIVATE REVOCATION DESCRIPTION', token: 'private-provider-token' }, { status: this.revokeStatus })
+      }
       return new MiniflareResponse(null, { status: this.revokeStatus })
     }
 
     assert.equal(url.pathname, '/api/oauth2/token')
+    assert.equal(parameters.get('client_id'), applicationId)
+    assert.equal(parameters.get('client_secret'), 'test-client-secret')
     const refreshing = parameters.get('grant_type') === 'refresh_token'
     this.requests.push(refreshing ? 'refresh' : 'exchange')
     if (refreshing) {
@@ -342,7 +352,63 @@ test('revocation failure is visible and cannot report complete cleanup', async c
   const body = await response.json() as Record<string, unknown>
   assert.equal(body.cleanup, 'failed')
   assert.equal(body.gate, 'unverified')
+  assert.equal(body.oauth, 'verified')
+  assert.deepEqual(body.cleanupFailure, { reason: 'upstream_error', status: 503 })
+  assert.equal(JSON.stringify(body).includes('private-provider'), false)
+  assert.equal(JSON.stringify(body).includes('PRIVATE REVOCATION'), false)
 })
+
+test('recognized revocation failures expose only a safe diagnostic', async context => {
+  const discord = new DiscordFixture()
+  discord.revokeStatus = 401
+  discord.revokeError = 'invalid_client'
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.deepEqual(body.cleanupFailure, { reason: 'invalid_client', status: 401 })
+  assert.equal(JSON.stringify(body).includes('private-provider-token'), false)
+  assert.equal(JSON.stringify(body).includes('PRIVATE REVOCATION'), false)
+})
+
+test('revocation redirects never forward the grant or client authentication', async context => {
+  const discord = new DiscordFixture()
+  discord.redirectRevoke = true
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime))
+  assert.equal(response.status, 502)
+  const body = await response.json() as Record<string, unknown>
+  assert.deepEqual(body.cleanupFailure, { reason: 'upstream_error', status: 302 })
+  assert.equal(discord.requests.filter(operation => operation === 'revoke').length, 1)
+})
+
+test('a revocation with no response body completes cleanup', async context => {
+  const discord = new DiscordFixture()
+  discord.revokeStatus = 204
+  const { runtime } = createRuntime(context, discord)
+  const response = await callback(runtime, await beginProbe(runtime))
+  assert.equal(response.status, 200)
+  const body = await response.json() as Record<string, unknown>
+  assert.equal(body.cleanup, 'revoked')
+  assert.equal(body.cleanupFailure, undefined)
+})
+
+for (const stage of ['exchange', 'refresh'] as const) {
+  test(`failed cleanup after a malformed ${stage} response retains both sanitized failures`, async context => {
+    const discord = new DiscordFixture()
+    discord.malformedTokenStage = stage
+    discord.revokeStatus = 401
+    discord.revokeError = 'invalid_client'
+    const { runtime } = createRuntime(context, discord)
+    const response = await callback(runtime, await beginProbe(runtime))
+    assert.equal(response.status, 502)
+    const body = await response.json() as Record<string, unknown>
+    assert.deepEqual(body.failure, { operation: stage, reason: 'invalid_token_response', status: 200 })
+    assert.equal(body.cleanup, 'failed')
+    assert.deepEqual(body.cleanupFailure, { reason: 'invalid_client', status: 401 })
+    assert.equal(JSON.stringify(body).includes('refresh-token'), false)
+  })
+}
 
 test('authorization from another application fails verification and revokes the grant', async context => {
   const discord = new DiscordFixture()

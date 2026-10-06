@@ -55,7 +55,8 @@ authorization attempts use SQLite Durable Objects and are deleted on consumption
 or expiry. No Last.fm account is linked and no music polling runs yet.
 
 If cleanup reports `failed`, remove the development application's authorization
-in Discord **User Settings → Authorized Apps**. Also remove it if the callback
+in Discord **User Settings → Authorized Apps**. `cleanupFailure` contains a
+sanitized error code and HTTP status for diagnosis. Also remove it if the callback
 is interrupted or an upstream token response cannot be validated. A successful
 probe deliberately revokes the whole grant, so use a dedicated development app.
 

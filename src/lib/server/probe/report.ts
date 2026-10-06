@@ -1,10 +1,12 @@
 import {
   DiscordOAuthFailure,
+  describeDiscordFailure,
   discordPresenceScopes,
   type DiscordAuthorization,
   type DiscordOAuthClient,
   type DiscordOperation,
   type DiscordTokens,
+  type DiscordFailureDiagnostic,
 } from '../discord/oauth'
 
 export interface ProbeReport {
@@ -16,6 +18,7 @@ export interface ProbeReport {
   refreshed?: boolean
   failure?: { operation: DiscordOperation | 'admission'; reason: string; status: number | null }
   cleanup: 'revoked' | 'failed' | 'not_obtained'
+  cleanupFailure?: DiscordFailureDiagnostic
 }
 
 export async function inspectDiscordAccess(
@@ -51,14 +54,18 @@ export async function inspectDiscordAccess(
     report.failure = error instanceof DiscordOAuthFailure
       ? { operation: error.operation, reason: error.reason, status: error.status }
       : { operation: 'inspect', reason: 'unexpected_error', status: null }
-    if (error instanceof DiscordOAuthFailure && error.cleanup) report.cleanup = error.cleanup
+    if (error instanceof DiscordOAuthFailure && error.cleanup) {
+      report.cleanup = error.cleanup.status
+      if (error.cleanup.status === 'failed') report.cleanupFailure = error.cleanup.failure
+    }
   } finally {
     if (tokens && report.cleanup === 'not_obtained') {
       try {
         await client.revoke(tokens.refreshToken)
         report.cleanup = 'revoked'
-      } catch {
+      } catch (error) {
         report.cleanup = 'failed'
+        report.cleanupFailure = describeDiscordFailure(error)
       }
     }
   }
