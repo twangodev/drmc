@@ -7,7 +7,7 @@ import { requireServiceConfiguration, type ServiceSettings } from '../../src/lib
 import { randomToken } from '../../src/lib/server/oauth/attempts'
 import { DiscordOAuthClient, DiscordOAuthFailure, discordPresenceScopes, type DiscordAuthorization, type DiscordTokens } from '../../src/lib/server/discord/oauth'
 import { openDiscordPresence, DiscordGatewayFailure, type LiveDiscordPresence } from '../../src/lib/server/discord/gateway'
-import { DiscordArtwork } from '../../src/lib/server/discord/artwork'
+import { DiscordApplicationAssets } from '../../src/lib/server/discord/application-assets'
 import { musicActivity } from '../../src/lib/server/discord/music-activity'
 import { LastfmClient, LastfmFailure, type LastfmSession, type ListeningTrack } from '../../src/lib/server/lastfm/client'
 import { connectDiscordGateway } from './discord-gateway'
@@ -39,7 +39,7 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
   private record?: AccountRecord
   private live?: LiveDiscordPresence
   private queue: Promise<unknown> = Promise.resolve()
-  private readonly artwork = new DiscordArtwork()
+  private readonly applicationAssets = new DiscordApplicationAssets()
   private published?: string
 
   constructor(ctx: DurableObjectState, env: ServiceSettings) {
@@ -220,9 +220,8 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
     if (!record.track && !preferences.keepStatus) { this.stopPresence(); return }
     await this.ensurePresence(accessToken)
     const applicationId = requireServiceConfiguration(this.env).discord.clientId
-    const cover = preferences.showCovers && record.track?.artwork ? await this.artwork.resolve(applicationId, accessToken, record.track.artwork) : undefined
-    const images = await this.artwork.applicationAssets(applicationId)
-    const activity = musicActivity(record.track, record.lastfmUsername!, preferences, { ...images, applicationId, cover })!
+    const images = await this.applicationAssets.resolve(applicationId)
+    const activity = musicActivity(record.track, record.lastfmUsername!, preferences, { ...images, applicationId })!
     const payload = JSON.stringify(activity)
     if (this.published === payload) return
     this.live!.update(activity)

@@ -73,7 +73,7 @@ Credentials and session cookies use AES-GCM, with account-bound encryption for
 stored provider grants. Secrets never appear in account API responses.
 
 Each account owns a SQLite Durable Object. It polls the official Last.fm API every
-10 seconds by default, resolves album artwork, refreshes expiring Discord grants, and
+10 seconds by default, includes album artwork, refreshes expiring Discord grants, and
 heartbeats its OAuth Gateway connection. Every 15 minutes it verifies the Last.fm
 session and stops sharing if that authorization was revoked. Alarms restore work after object eviction
 or deployment. Reconnects use bounded backoff. Temporary Last.fm failures preserve
@@ -122,7 +122,12 @@ Failed revocations retain encrypted credentials only for scheduled cleanup retri
 the browser session is invalidated immediately. Last.fm permissions can also be
 revoked from Last.fm settings.
 
-The Discord OAuth Gateway protocol and artwork flow are adapted from
+Album-art URLs from the official Last.fm API are sent directly in the activity,
+as in lfm-cli. [Discord proxies external images](https://docs.discord.com/developers/events/gateway-events#activity-asset-image);
+DRMC does not register or cache album images. Registered Last.fm logo and heart
+assets are cached separately, and the logo is used when no cover is available.
+
+The Discord OAuth Gateway protocol is adapted from
 [Discord-Social-RPC 0.2.3](https://github.com/LeonLeBreton/Discord-Social-RPC/tree/b4996e61547505742b141378fe073650808adfd4).
 Its MIT license is retained in the source and Worker bundle. The undocumented
 transport passed a real cloud presence test; simulated tests do not replace

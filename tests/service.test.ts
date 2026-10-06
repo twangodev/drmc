@@ -17,6 +17,7 @@ class Providers {
   loved = false
   lastfmUsername = 'twangodev'
   artworkRequests = 0
+  artworkUrl: string | undefined = 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png'
   retryAfter?: string
   lastfmFailure = false
   lastfmSessionRevoked = false
@@ -64,11 +65,11 @@ class Providers {
       assert.equal(parameters.get('user'), this.lastfmUsername)
       this.polls++
       if (this.lastfmFailure) return RuntimeResponse.json({ error: 29, message: 'PRIVATE PROVIDER ERROR' }, { headers: this.retryAfter ? { 'Retry-After': this.retryAfter } : {} })
-      return RuntimeResponse.json({ recenttracks: { track: this.playing ? [{ name: 'Kid A', artist: { name: 'Radiohead' }, album: { '#text': 'Kid A' }, loved: this.loved ? '1' : '0', image: [{ '#text': 'https://lastfm.freetls.fastly.net/i/u/300x300/cover.png' }], '@attr': { nowplaying: 'true' } }] : [] } })
+      return RuntimeResponse.json({ recenttracks: { track: this.playing ? [{ name: 'Kid A', artist: { name: 'Radiohead' }, album: { '#text': 'Kid A' }, loved: this.loved ? '1' : '0', image: this.artworkUrl ? [{ '#text': this.artworkUrl }] : [], '@attr': { nowplaying: 'true' } }] : [] } })
     }
     assert.equal(url.origin, 'https://discord.com')
     if (url.pathname === `/api/v9/oauth2/applications/${applicationId}/assets`) return RuntimeResponse.json([{ id: '970027358432161832', name: 'lfm_logo' }, { id: '970173669169053717', name: 'heart' }])
-    if (url.pathname.endsWith('/external-assets')) { this.artworkRequests++; return RuntimeResponse.json([{ external_asset_path: 'external/artwork.png' }]) }
+    if (url.pathname.endsWith('/external-assets')) { this.artworkRequests++; return RuntimeResponse.json({ error: 'External asset registration is unnecessary' }, { status: 503 }) }
     if (url.pathname === '/api/v10/oauth2/@me') return RuntimeResponse.json({ application: { id: applicationId }, user: { id: userId }, scopes: ['identify', 'openid', 'sdk.social_layer_presence'], expires: new Date(this.discordExpires).toISOString() })
     const parameters = new URLSearchParams(await request.text())
     if (url.pathname.endsWith('/revoke')) {
@@ -150,7 +151,8 @@ test('accounts link, publish from an alarm, pause, resume, logout without stoppi
   await eventually(() => providers.activity !== null)
   assert.equal(providers.activity!.details, 'Kid A')
   assert.equal(providers.activity!.state, 'by Radiohead')
-  assert.equal((providers.activity!.assets as { large_image: string }).large_image, 'mp:external/artwork.png')
+  assert.equal((providers.activity!.assets as { large_image: string }).large_image, providers.artworkUrl)
+  assert.equal(providers.artworkRequests, 0)
   assert.equal((await account(runtime, signedIn.cookies)).account!.lastfmUsername, 'twangodev')
   const publicResponse = JSON.stringify(await account(runtime, signedIn.cookies))
   assert.equal(/access-token|refresh-token|credentials|session|PRIVATE/.test(publicResponse), false)
@@ -270,6 +272,30 @@ test('incomplete Last.fm callbacks are distinguished from explicit cancellation 
   }
   assert.equal(providers.lastfmExchanges, 0)
   assert.equal((await account(runtime, session.cookies)).account!.status, 'link_lastfm')
+})
+
+test('album covers follow API artwork changes and preferences without resetting elapsed time', async context => {
+  const { runtime, providers } = createRuntime(context)
+  const session = await signIn(runtime)
+  await linkLastfm(runtime, session.cookies)
+  await eventually(() => providers.activity !== null)
+  const firstObservation = (providers.activity!.timestamps as { start: number }).start
+  const largeImage = () => (providers.activity?.assets as { large_image?: string } | undefined)?.large_image
+  const preferences = { ...defaultMusicPreferences, refreshInterval: 1 }
+  providers.artworkUrl = 'https://lastfm.freetls.fastly.net/i/u/300x300/another-cover.png'
+  await savePreferences(runtime, session.cookies, preferences)
+  await eventually(() => largeImage() === providers.artworkUrl)
+  assert.equal((providers.activity!.timestamps as { start: number }).start, firstObservation)
+  providers.artworkUrl = undefined
+  await eventually(() => largeImage() === '970027358432161832')
+  await savePreferences(runtime, session.cookies, { ...preferences, showCovers: false })
+  await eventually(() => largeImage() === undefined)
+  providers.artworkUrl = 'https://lastfm.freetls.fastly.net/i/u/300x300/restored-cover.png'
+  await savePreferences(runtime, session.cookies, preferences)
+  await eventually(() => largeImage() === providers.artworkUrl)
+  assert.equal((providers.activity!.timestamps as { start: number }).start, firstObservation)
+  assert.equal(providers.artworkRequests, 0)
+  await post(runtime, '/api/account/pause', session.cookies)
 })
 
 test('saved CLI preferences change live activities, preserve elapsed time, and persist through sign-in and pause', async context => {
