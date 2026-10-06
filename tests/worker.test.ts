@@ -171,7 +171,7 @@ test('prerendered pages serve through assets while callback and API routes stay 
     assert.match(html, /DRMC/)
     assert.match(html, /content-security-policy/i)
     assert.equal(html.includes(accessKey), false)
-    assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer')
+    assert.equal(response.headers.get('Referrer-Policy'), 'same-origin')
     assert.equal(response.headers.get('X-Frame-Options'), 'DENY')
   }
   const callbackResponse = await runtime.dispatchFetch(`${origin}/probe/callback`)

@@ -4,5 +4,5 @@
     "types": ["node"],
     "lib": ["ESNext", "DOM"]
   },
-  "include": ["tests", "scripts"]
+  "include": ["tests", "scripts", "playwright.config.ts"]
 }

@@ -5,7 +5,7 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte'
 export default {
   preprocess: vitePreprocess(),
   kit: {
-    adapter: adapter(),
+    adapter: adapter({ fallback: '404.html' }),
     csp: {
       mode: 'hash',
       directives: {
@@ -14,7 +14,7 @@ export default {
         'style-src': ['self', 'unsafe-inline'],
         'object-src': ['none'],
         'base-uri': ['self'],
-        'form-action': ['self'],
+        'form-action': ['self', 'https://discord.com'],
       },
     },
   },

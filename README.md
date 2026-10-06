@@ -64,6 +64,7 @@ probe deliberately revokes the whole grant, so use a dedicated development app.
 ```sh
 bun run check
 bun run test
+bun run test:web
 bun run audit:discord
 ```
 
@@ -78,6 +79,11 @@ statement of application eligibility or transport support.
 Worker artifacts to `dist/` and prerendered SvelteKit assets to `build/`.
 It does not deploy anything. Miniflare needs permission to
 bind local loopback ports.
+
+`test:web` runs Chromium against the built app through Wrangler, checking the
+publishing gate, responsive layout, theme persistence, CSP hydration, and probe
+readiness. Run `bun run build` first and install Playwright's Chromium if it is
+not already available (`bunx playwright install chromium`).
 
 `bun run dev` builds the frontend before starting Wrangler. After frontend edits,
 run `bun run build:app` to refresh the assets served by the local Worker. The
@@ -100,6 +106,11 @@ build time and served by Workers Static Assets. Dynamic API and OAuth paths run
 through the Worker first. `/api/probe` reports only probe readiness; credential
 validation remains in the backend. The authorization form submits directly to
 the Worker, and the callback retains its sanitized JSON evidence report.
+
+The UI follows the typography, warm neutral palette, fine borders, and compact
+controls of the `twangodev` and `sdocx` references. It supports light and dark
+themes with a local preference. Fonts are self-hosted with their original
+licenses in `static/fonts/`; application components are written for DRMC.
 
 `src/lib/server/discord` contains provider calls using injected standard `fetch`.
 `src/lib/server/oauth` defines the portable authorization-attempt contract. `src/lib/server/probe`

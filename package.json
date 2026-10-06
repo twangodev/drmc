@@ -14,10 +14,13 @@
     "check": "tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.tools.json && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "audit:discord": "node scripts/audit-discord-api.ts",
     "build": "bun run check && bun run build:app && wrangler deploy --dry-run --outdir=dist",
-    "test": "bun run build && node --test tests/*.test.ts"
+    "test": "bun run build && node --test tests/*.test.ts",
+    "test:web": "playwright test"
   },
   "dependencies": {},
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@lucide/svelte": "^0.575.0",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.70.2",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
