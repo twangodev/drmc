@@ -1,4 +1,4 @@
-import type { DiscordPresenceDiagnostics, DiscordPresenceEvent } from '../../discord-presence.ts'
+import type { DiscordPresenceActivity, DiscordPresenceDiagnostics, DiscordPresenceDispatch, DiscordPresenceEvent } from '../../discord-presence.ts'
 import { gatewayObject, type DiscordActivity } from './gateway-protocol.ts'
 
 export class DiscordGatewayDiagnostics {
@@ -13,7 +13,7 @@ export class DiscordGatewayDiagnostics {
   }
 
   snapshot(): DiscordPresenceDiagnostics {
-    return { ...this.state, dispatches: this.state.dispatches.map(dispatch => ({ ...dispatch })) }
+    return structuredClone(this.state)
   }
 
   ready(): void {
@@ -44,14 +44,23 @@ export class DiscordGatewayDiagnostics {
     if (frame.op !== 0) return
     const event = typeof frame.t === 'string' && /^[A-Z_]{1,64}$/.test(frame.t) ? frame.t : 'UNKNOWN'
     const code = gatewayObject(frame.d)?.code
-    const dispatch = { at, event, ...(typeof code === 'number' && Number.isSafeInteger(code) ? { code } : {}) }
+    const data = gatewayObject(frame.d)
+    const activities = this.ownActivities(event, frame.d).slice(0, 8).map(value => activitySummary(value, this.activity))
+    const dispatch: DiscordPresenceDispatch = {
+      at, event, ...(typeof code === 'number' && Number.isSafeInteger(code) ? { code } : {}),
+      dataShape: Array.isArray(frame.d) ? 'array' : data ? 'object' : 'other',
+      dataFields: data ? Object.keys(data).filter(key => ['sessions', 'activities', 'user', 'user_id', 'code', 'status', 'message'].includes(key)) : [],
+      ...(['SESSIONS_REPLACE', 'PRESENCE_UPDATE'].includes(event) ? { activities } : {}),
+    }
     this.state.dispatches = [...this.state.dispatches, dispatch].slice(-8)
     const observed = this.ownActivities(event, frame.d).some(value => {
       const activity = gatewayObject(value)
       return this.activity && activity?.details === this.activity.details && activity?.state === this.activity.state
     })
     if (observed) this.state.activityObservedAt = at
-    this.emit({ event: 'gateway_dispatch', at, dispatch: event, ...(dispatch.code !== undefined ? { code: dispatch.code } : {}), activityObserved: observed })
+    this.emit({ event: 'gateway_dispatch', at, dispatch: event, ...(dispatch.code !== undefined ? { code: dispatch.code } : {}),
+      activityObserved: observed, dataShape: dispatch.dataShape, dataFields: dispatch.dataFields, activities: dispatch.activities,
+    })
   }
 
   closed(reason?: string, code?: number): void {
@@ -62,7 +71,8 @@ export class DiscordGatewayDiagnostics {
   }
 
   private ownActivities(event: string, data: unknown): unknown[] {
-    if (event === 'SESSIONS_REPLACE' && Array.isArray(data)) return data.flatMap(session => {
+    const sessions = Array.isArray(data) ? data : gatewayObject(data)?.sessions
+    if (event === 'SESSIONS_REPLACE' && Array.isArray(sessions)) return sessions.flatMap(session => {
       const activities = gatewayObject(session)?.activities
       return Array.isArray(activities) ? activities : []
     })
@@ -73,6 +83,19 @@ export class DiscordGatewayDiagnostics {
 
   private emit(event: DiscordPresenceEvent): void {
     try { this.observe?.(event) } catch {}
+  }
+}
+
+function activitySummary(value: unknown, requested?: DiscordActivity | null): DiscordPresenceActivity {
+  const activity = gatewayObject(value)
+  const buttons = Array.isArray(activity?.buttons) ? activity.buttons : []
+  return {
+    fields: activity ? Object.keys(activity).filter(key => ['name', 'type', 'application_id', 'details', 'state', 'timestamps', 'assets', 'buttons', 'metadata'].includes(key)) : [],
+    ...(typeof activity?.type === 'number' && Number.isSafeInteger(activity.type) ? { type: activity.type } : {}),
+    nameMatches: Boolean(requested && activity?.name === requested.name),
+    detailsMatch: Boolean(requested && activity?.details === requested.details),
+    stateMatches: Boolean(requested && activity?.state === requested.state),
+    buttons: !buttons.length ? 'none' : buttons.every(button => typeof button === 'string') ? 'labels' : buttons.every(button => gatewayObject(button)) ? 'objects' : 'mixed',
   }
 }
 
