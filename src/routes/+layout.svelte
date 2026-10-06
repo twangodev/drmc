@@ -14,6 +14,7 @@
       <a href="/" class="flex items-center gap-2 text-base font-semibold tracking-tight" aria-label="DRMC home"><Brand />drmc</a>
       <nav aria-label="Primary" class="flex items-center gap-3 sm:gap-5">
         <a href="/" aria-current={page.url.pathname === '/' ? 'page' : undefined} class="text-xs text-muted hover:text-text aria-[current=page]:text-text">Overview</a>
+        <a href="/app" aria-current={page.url.pathname === '/app' ? 'page' : undefined} class="text-xs text-muted hover:text-text aria-[current=page]:text-text">Your music</a>
         <a href="/probe" aria-current={page.url.pathname === '/probe' ? 'page' : undefined} class="text-xs text-muted hover:text-text aria-[current=page]:text-text">Access probe</a>
         <span class="h-4 w-px bg-subtle" aria-hidden="true"></span>
         <ThemeToggle />

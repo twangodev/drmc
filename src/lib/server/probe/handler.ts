@@ -39,7 +39,7 @@ export async function handleProbeRequest(
   let response: Response
   try {
     if (url.pathname === '/health' && request.method === 'GET') {
-      response = Response.json({ status: 'ok', feasibility: 'unverified' })
+      response = Response.json({ status: 'ok' })
     } else if (url.pathname === '/api/probe' && request.method === 'GET') {
       response = Response.json(readProbeStatus(settings))
     } else if (url.pathname === '/probe/start' && request.method === 'POST') {
@@ -120,7 +120,7 @@ async function completeProbe(
     await hashToken(browserBinding),
     dependencies.now?.() ?? Date.now(),
   )
-  if (!consumed) throw new ProbeRequestFailure(400, 'invalid_authorization_state')
+  if (!consumed || consumed.purpose) throw new ProbeRequestFailure(400, 'invalid_authorization_state')
   if (parameters.has('error')) {
     const discordError = readDiscordOAuthError(parameters.get('error')) ?? 'unknown_error'
     throw new ProbeRequestFailure(400, discordError === 'access_denied' ? 'authorization_denied' : 'authorization_failed', {

@@ -10,20 +10,23 @@
   "assets": {
     "directory": "./build",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/health", "/probe/start", "/probe/callback"],
+    "run_worker_first": ["/api/*", "/auth/*", "/health", "/probe/start", "/probe/callback"],
     "not_found_handling": "404-page"
   },
   "durable_objects": {
     "bindings": [
-      { "name": "OAUTH_ATTEMPTS", "class_name": "OAuthAttempt" }
+      { "name": "OAUTH_ATTEMPTS", "class_name": "OAuthAttempt" },
+      { "name": "MUSIC_ACCOUNTS", "class_name": "MusicAccount" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["OAuthAttempt"] }
+    { "tag": "v1", "new_sqlite_classes": ["OAuthAttempt"] },
+    { "tag": "v2", "new_sqlite_classes": ["MusicAccount"] }
   ],
   "vars": {
     "APP_ORIGIN": "http://localhost:8787",
     "PROBE_ENABLED": "false",
+    "SERVICE_ENABLED": "false",
     "PROBE_ALLOWED_DISCORD_IDS": ""
   },
   "observability": {

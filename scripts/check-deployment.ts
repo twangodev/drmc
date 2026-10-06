@@ -11,7 +11,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 async function verifyDeployment(): Promise<void> {
   const health = await request('/health')
   assert.equal(health.status, 200, 'Health endpoint is unavailable')
-  assert.deepEqual(await health.json(), { status: 'ok', feasibility: 'unverified' })
+  assert.deepEqual(await health.json(), { status: 'ok' })
 
   if (process.env.GITHUB_SHA) {
     const release = await request(`/release.json?revision=${process.env.GITHUB_SHA}`)
@@ -19,11 +19,11 @@ async function verifyDeployment(): Promise<void> {
     assert.deepEqual(await release.json(), { revision: process.env.GITHUB_SHA }, 'Hosted source revision does not match the workflow')
   }
 
-  for (const path of ['/', '/probe']) {
+  for (const path of ['/', '/probe', '/app']) {
     const response = await request(path)
     assert.equal(response.status, 200, `${path} is unavailable`)
     assert.match(response.headers.get('Content-Type') ?? '', /text\/html/)
-    assert.equal(response.headers.get('Referrer-Policy'), 'same-origin')
+    assert.equal(response.headers.get('Referrer-Policy'), path === '/app' ? 'no-referrer' : 'same-origin')
     assert.equal(response.headers.get('X-Frame-Options'), 'DENY')
     assert.match(await response.text(), /DRMC/)
   }
@@ -34,6 +34,13 @@ async function verifyDeployment(): Promise<void> {
   const status = await readiness.json() as { state?: string; publication?: string }
   assert.ok(['disabled', 'ready'].includes(status.state ?? ''), 'Hosted probe configuration is incomplete')
   assert.equal(status.publication, 'not_tested')
+
+  const account = await request('/api/account')
+  assert.ok([200, 401].includes(account.status), 'Account API is unavailable')
+  assert.equal(account.headers.get('Cache-Control'), 'no-store')
+  const accountStatus = await account.json() as { enabled: boolean; account: unknown }
+  assert.equal(accountStatus.account, null, 'Anonymous requests cannot expose linked accounts')
+  if (process.env.SERVICE_ENABLED === 'true') assert.equal(accountStatus.enabled, true)
 
   const missingApi = await request('/api/deployment-check-missing')
   assert.equal(missingApi.status, 404, 'Missing API route must return 404')

@@ -12,7 +12,7 @@ export function requireServiceConfiguration(settings: ServiceSettings) {
   const local = ['localhost', '127.0.0.1'].includes(origin.hostname)
   if (origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash || !(origin.protocol === 'https:' || (local && origin.protocol === 'http:'))) throw new Error('Invalid APP_ORIGIN')
   if (!/^\d{17,20}$/.test(settings.DISCORD_CLIENT_ID ?? '') || !settings.DISCORD_CLIENT_SECRET) throw new Error('Discord credentials required')
-  if (!settings.LASTFM_API_KEY || !settings.LASTFM_API_SECRET) throw new Error('Last.fm credentials required')
+  if (!/^[a-f0-9]{32}$/i.test(settings.LASTFM_API_KEY ?? '') || !/^[a-f0-9]{32}$/i.test(settings.LASTFM_API_SECRET ?? '')) throw new Error('Last.fm credentials required')
   if (!/^[a-f0-9]{64}$/.test(settings.TOKEN_ENCRYPTION_KEY ?? '')) throw new Error('Encryption key required')
   return {
     origin: origin.origin,

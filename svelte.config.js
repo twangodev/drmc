@@ -14,7 +14,7 @@ export default {
         'style-src': ['self', 'unsafe-inline'],
         'object-src': ['none'],
         'base-uri': ['self'],
-        'form-action': ['self', 'https://discord.com'],
+        'form-action': ['self', 'https://discord.com', 'https://www.last.fm'],
       },
     },
   },

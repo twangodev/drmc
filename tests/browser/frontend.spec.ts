@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test'
 
-test('overview renders on narrow screens and retains the publishing gate without JavaScript', async ({ browser }) => {
+test('overview renders on narrow screens and explains cloud sharing without JavaScript', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 320, height: 740 } })
   const page = await context.newPage()
   await page.goto('http://localhost:8787/')
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Your music,on Discord.')
-  await expect(page.getByRole('heading', { name: 'Cloud publishing is still being verified.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your music keeps going. So do we.' })).toBeVisible()
   const overflows = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
   expect(overflows).toBe(false)
   await page.goto('http://localhost:8787/probe')
@@ -25,7 +25,7 @@ test('theme and fonts work under the production CSP and preference survives relo
   await expect(page.getByRole('button', { name: 'Use dark theme' })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   expect(await page.evaluate(() => document.fonts.check('16px "Overused Grotesk"'))).toBe(true)
-  await page.getByRole('link', { name: 'View access probe' }).click()
+  await page.getByRole('link', { name: 'Access probe' }).click()
   await expect(page.getByRole('status')).toHaveText('Probe disabled')
   await expect(page.getByRole('button', { name: 'Continue to Discord' })).toBeDisabled()
   expect(errors).toEqual([])
@@ -88,3 +88,35 @@ for (const publish of [false, true]) {
     await expect(page.getByRole('heading', { name: 'Mock probe start' })).toBeVisible()
   })
 }
+
+
+test('account linking uses native forms and only enables Last.fm after Discord sign-in', async ({ page }) => {
+  await page.route('**/api/account', route => route.fulfill({ status: 401, json: { enabled: true, account: null } }))
+  await page.goto('/app')
+  await expect(page.getByRole('button', { name: 'Connect Discord' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Connect Last.fm' })).toBeDisabled()
+  await expect(page.locator('form[action="/auth/discord/start"]')).toHaveAttribute('method', 'post')
+  await page.unroute('**/api/account')
+  await page.route('**/api/account', route => route.fulfill({ json: { enabled: true, account: { userId: '234567890123456789', enabled: true, status: 'link_lastfm', connected: false, track: null } } }))
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Connect Last.fm' })).toBeEnabled()
+  await expect(page.locator('form[action="/auth/lastfm/start"]')).toHaveAttribute('method', 'post')
+})
+
+test('the account dashboard shows music, pause controls, and safe authorization errors on narrow screens', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 740 })
+  await page.route('**/api/account', route => route.fulfill({ json: { enabled: true, account: { userId: '234567890123456789', lastfmUsername: 'twangodev', enabled: true, status: 'listening', connected: true, track: { title: 'Everything In Its Right Place', artist: 'Radiohead', album: 'Kid A' } } } }))
+  await page.goto('/app?error=lastfm_authorization_failed')
+  await expect(page.getByRole('status')).toHaveText('Sharing your music')
+  await expect(page.getByText('Everything In Its Right Place', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Pause sharing' })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveText('Last.fm could not be connected. Please try again.')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+})
+
+test('account provider redirects are allowed by the effective production content security policy', async ({ page }) => {
+  await page.goto('/app')
+  const policy = await page.locator('meta[http-equiv="content-security-policy" i]').getAttribute('content')
+  expect(policy).toMatch(/form-action[^;]+https:\/\/discord\.com/)
+  expect(policy).toMatch(/form-action[^;]+https:\/\/www\.last\.fm/)
+})

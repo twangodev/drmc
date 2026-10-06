@@ -196,7 +196,7 @@ function callback(runtime: Miniflare, attempt: { state: string; cookie: string }
 test('the disabled probe reports health without accepting OAuth attempts', async context => {
   const { runtime, discord } = createRuntime(context, undefined, { PROBE_ENABLED: 'false' })
   const health = await runtime.dispatchFetch(`${origin}/health`)
-  assert.deepEqual(await health.json(), { status: 'ok', feasibility: 'unverified' })
+  assert.deepEqual(await health.json(), { status: 'ok' })
   const start = await runtime.dispatchFetch(`${origin}/probe/start`, { method: 'POST' })
   assert.equal(start.status, 404)
   assert.deepEqual(await start.json(), { error: 'probe_disabled' })

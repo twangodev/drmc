@@ -48,18 +48,26 @@ export class LastfmClient {
     return { title, artist: artistName, album: boundedText(gatewayObject(track.album)?.['#text']) ?? '', ...(artwork ? { artwork } : {}) }
   }
 
+  async verifySession(session: LastfmSession): Promise<void> {
+    const parameters = { api_key: this.key, method: 'user.getInfo', sk: session.key }
+    const response = await this.send(new URLSearchParams({ ...parameters, api_sig: await lastfmSignature(parameters, this.secret), format: 'json' }))
+    if (gatewayObject(response.user)?.name !== session.username) throw new LastfmFailure('authorization_failed')
+  }
+
   private async send(parameters: URLSearchParams): Promise<Record<string, unknown>> {
     let response: Response
     try {
       response = await fetch('https://ws.audioscrobbler.com/2.0/', { method: 'POST', body: parameters, redirect: 'manual', signal: AbortSignal.timeout(8000) })
     } catch { throw new LastfmFailure('network_error') }
-    if (!response.ok) throw new LastfmFailure(response.status === 429 ? 'rate_limited' : 'upstream_error')
     let body: Record<string, unknown> | null
-    try { body = gatewayObject(await response.json()) } catch { throw new LastfmFailure('invalid_response') }
+    try { body = gatewayObject(await response.json()) } catch {
+      throw new LastfmFailure(response.ok ? 'invalid_response' : response.status === 429 ? 'rate_limited' : 'upstream_error')
+    }
     if (!body) throw new LastfmFailure('invalid_response')
     if (typeof body.error === 'number') {
       throw new LastfmFailure(body.error === 29 ? 'rate_limited' : [4, 9, 14, 15].includes(body.error) ? 'authorization_failed' : 'upstream_error')
     }
+    if (!response.ok) throw new LastfmFailure(response.status === 429 ? 'rate_limited' : 'upstream_error')
     return body
   }
 }
