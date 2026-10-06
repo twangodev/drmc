@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import { test } from 'node:test'
 import { Miniflare, Response as RuntimeResponse, type Request as RuntimeRequest } from 'miniflare'
 
-const token = 'a'.repeat(32)
+const token = 'Z'.repeat(32)
 const apiKey = 'b'.repeat(32)
 const apiSecret = 'c'.repeat(32)
 

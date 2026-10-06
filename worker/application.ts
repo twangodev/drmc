@@ -1,7 +1,7 @@
 import { CredentialVault } from '../src/lib/server/accounts/credentials'
 import { requireServiceConfiguration, type ServiceSettings } from '../src/lib/server/accounts/configuration'
 import { DiscordOAuthClient, discordPresenceScopes, type DiscordTokens } from '../src/lib/server/discord/oauth'
-import { LastfmClient } from '../src/lib/server/lastfm/client'
+import { LastfmClient, isLastfmCredential } from '../src/lib/server/lastfm/client'
 import { randomToken, hashToken, isAuthorizationToken, authorizationLifetimeMs, type AuthorizationAttempt, type AuthorizationAttemptStore } from '../src/lib/server/oauth/attempts'
 import type { MusicAccount } from './cloudflare/music-account'
 import { readBrowserSession, readCookie, cookie, browserSessionLifetimeSeconds, type BrowserSession } from './browser-session'
@@ -68,8 +68,11 @@ export async function handleServiceRequest(request: Request, settings: ServiceSe
       } else if (url.pathname === '/auth/lastfm/callback' && request.method === 'GET') {
         const attempt = await consumeAttempt(request, dependencies.attempts, 'lastfm_link')
         if (!session || !account || attempt.userId !== session.userId || attempt.session !== session.nonce) throw new BrowserRequestFailure(401, 'sign_in_required')
+        if (url.searchParams.has('error')) {
+          throw new BrowserRequestFailure(400, url.searchParams.get('error') === 'access_denied' ? 'lastfm_authorization_denied' : 'lastfm_authorization_failed')
+        }
         const token = url.searchParams.get('token')
-        if (!token || !/^[a-f0-9]{32}$/i.test(token)) throw new BrowserRequestFailure(400, 'lastfm_authorization_denied')
+        if (!isLastfmCredential(token)) throw new BrowserRequestFailure(400, 'lastfm_authorization_incomplete')
         const lastfm = await new LastfmClient(configuration.lastfm.key, configuration.lastfm.secret).exchange(token)
         await actor(session.userId).linkLastfm(session.nonce, lastfm)
         response = redirect('/app')

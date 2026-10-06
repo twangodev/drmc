@@ -112,6 +112,8 @@ test('the account dashboard shows music, pause controls, and safe authorization 
   await expect(page.getByRole('button', { name: 'Pause sharing' })).toBeVisible()
   await expect(page.getByRole('alert')).toHaveText('Last.fm could not be connected. Please try again.')
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+  await page.goto('/app?error=lastfm_authorization_incomplete')
+  await expect(page.getByRole('alert')).toHaveText('Last.fm did not return a usable authorization token. Please start again.')
 })
 
 test('account provider redirects are allowed by the effective production content security policy', async ({ page }) => {

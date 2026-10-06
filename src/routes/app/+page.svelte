@@ -20,6 +20,7 @@
     discord_authorization_failed: 'Discord could not be connected. Check the application’s callback URL and try again.',
     discord_presence_scope_missing: 'Discord did not grant access to share your Listening activity.',
     lastfm_authorization_denied: 'Last.fm authorization was cancelled. You can try again.',
+    lastfm_authorization_incomplete: 'Last.fm did not return a usable authorization token. Please start again.',
     lastfm_authorization_failed: 'Last.fm could not be connected. Please try again.',
     invalid_authorization_state: 'That authorization link expired or has already been used. Please start again.',
     sign_in_required: 'Sign in with Discord before connecting Last.fm.',

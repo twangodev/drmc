@@ -20,11 +20,11 @@ export class LastfmClient {
   }
 
   async exchange(token: string): Promise<LastfmSession> {
-    if (!/^[a-f0-9]{32}$/i.test(token)) throw new LastfmFailure('invalid_token')
+    if (!isLastfmCredential(token)) throw new LastfmFailure('invalid_token')
     const parameters = { api_key: this.key, method: 'auth.getSession', token }
     const response = await this.send(new URLSearchParams({ ...parameters, api_sig: await lastfmSignature(parameters, this.secret), format: 'json' }))
     const session = gatewayObject(response.session)
-    if (typeof session?.name !== 'string' || !/^[\w-]{1,64}$/.test(session.name) || typeof session.key !== 'string' || !/^[a-f0-9]{32}$/i.test(session.key)) {
+    if (typeof session?.name !== 'string' || !/^[\w-]{1,64}$/.test(session.name) || !isLastfmCredential(session.key)) {
       throw new LastfmFailure('invalid_session_response')
     }
     return { username: session.name, key: session.key }
@@ -70,6 +70,10 @@ export class LastfmClient {
     if (!response.ok) throw new LastfmFailure(response.status === 429 ? 'rate_limited' : 'upstream_error')
     return body
   }
+}
+
+export function isLastfmCredential(value: unknown): value is string {
+  return typeof value === 'string' && /^[\x21-\x7E]{1,1024}$/.test(value)
 }
 
 export async function lastfmSignature(parameters: Record<string, string>, secret: string): Promise<string> {

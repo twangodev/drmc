@@ -22,6 +22,7 @@ class Providers {
   refreshed = 0
   revoked = 0
   polls = 0
+  lastfmExchanges = 0
   sockets: InstanceType<typeof WebSocketPair>[0][] = []
 
   async respond(request: RuntimeRequest): Promise<RuntimeResponse> {
@@ -48,7 +49,11 @@ class Providers {
     if (url.origin === 'https://ws.audioscrobbler.com') {
       const parameters = new URLSearchParams(await request.text())
       assert.equal(parameters.get('api_key'), apiKey)
-      if (parameters.get('method') === 'auth.getSession') return RuntimeResponse.json({ session: { name: 'twangodev', key: 'c'.repeat(32) } })
+      if (parameters.get('method') === 'auth.getSession') {
+        this.lastfmExchanges++
+        assert.equal(parameters.get('token'), 'CallbackToken_Z'.repeat(3))
+        return RuntimeResponse.json({ session: { name: 'twangodev', key: 'SessionKey_Z'.repeat(3) } })
+      }
       if (parameters.get('method') === 'user.getInfo') return RuntimeResponse.json(this.lastfmSessionRevoked ? { error: 9 } : { user: { name: 'twangodev' } }, { status: this.lastfmSessionRevoked ? 403 : 200 })
       this.polls++
       if (this.lastfmFailure) return RuntimeResponse.json({ error: 29, message: 'PRIVATE PROVIDER ERROR' })
@@ -108,7 +113,7 @@ async function linkLastfm(runtime: Miniflare, session: string[]) {
   const start = await post(runtime, '/auth/lastfm/start', session)
   const authorization = new URL(start.headers.get('Location')!)
   const callback = new URL(authorization.searchParams.get('cb')!)
-  callback.searchParams.set('token', 'a'.repeat(32))
+  callback.searchParams.set('token', 'CallbackToken_Z'.repeat(3))
   const result = await runtime.dispatchFetch(callback.toString(), { redirect: 'manual', headers: { Cookie: [...session, ...cookies(start)].join('; ') } })
   assert.equal(result.headers.get('Location'), '/app')
 }
@@ -228,4 +233,26 @@ test('revoked Last.fm authorization stops sharing and asks to reconnect Last.fm'
   assert.equal(providers.activity, null)
   assert.equal(providers.connections, 0)
   await post(runtime, '/api/account/pause', session.cookies)
+})
+
+test('incomplete Last.fm callbacks are distinguished from explicit cancellation without exchanging a grant', async context => {
+  const { runtime, providers } = createRuntime(context)
+  const session = await signIn(runtime)
+  for (const [token, providerError, expected] of [
+    [null, null, 'lastfm_authorization_incomplete'],
+    ['', null, 'lastfm_authorization_incomplete'],
+    ['invalid token', null, 'lastfm_authorization_incomplete'],
+    ['Z'.repeat(1025), null, 'lastfm_authorization_incomplete'],
+    [null, 'access_denied', 'lastfm_authorization_denied'],
+    [null, 'invalid_request', 'lastfm_authorization_failed'],
+  ]) {
+    const start = await post(runtime, '/auth/lastfm/start', session.cookies)
+    const callback = new URL(new URL(start.headers.get('Location')!).searchParams.get('cb')!)
+    if (token !== null) callback.searchParams.set('token', token!)
+    if (providerError !== null) callback.searchParams.set('error', providerError!)
+    const response = await runtime.dispatchFetch(callback.toString(), { redirect: 'manual', headers: { Cookie: [...session.cookies, ...cookies(start)].join('; ') } })
+    assert.equal(response.headers.get('Location'), `/app?error=${expected}`)
+  }
+  assert.equal(providers.lastfmExchanges, 0)
+  assert.equal((await account(runtime, session.cookies)).account!.status, 'link_lastfm')
 })
