@@ -152,6 +152,9 @@ vite.config.ts.timestamp-*
 .idea/
 
 .wrangler/
+build/
+test-results/
+playwright-report/
 .dev.vars
 .dev.vars.*
 !.dev.vars.example

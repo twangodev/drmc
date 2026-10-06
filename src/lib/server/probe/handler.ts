@@ -13,6 +13,7 @@ import {
   type ProbeSettings,
 } from './configuration'
 import { inspectDiscordAccess } from './report'
+import { readProbeStatus } from './status'
 
 export interface ProbeDependencies {
   attempts: AuthorizationAttemptStore
@@ -36,8 +37,8 @@ export async function handleProbeRequest(
   try {
     if (url.pathname === '/health' && request.method === 'GET') {
       response = Response.json({ status: 'ok', feasibility: 'unverified' })
-    } else if (['/', '/probe'].includes(url.pathname) && request.method === 'GET') {
-      response = probePage(settings.PROBE_ENABLED === 'true')
+    } else if (url.pathname === '/api/probe' && request.method === 'GET') {
+      response = Response.json(readProbeStatus(settings))
     } else if (url.pathname === '/probe/start' && request.method === 'POST') {
       response = await startProbe(request, requireEnabledProbe(settings), dependencies)
     } else if (url.pathname === '/probe/callback' && request.method === 'GET') {
@@ -181,22 +182,4 @@ function protectResponse(response: Response): Response {
   response.headers.set('X-Content-Type-Options', 'nosniff')
   response.headers.set('Content-Security-Policy', "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
   return response
-}
-
-function probePage(enabled: boolean): Response {
-  return new Response(`<!doctype html>
-<html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DRMC Discord feasibility probe</title>
-<h1>Discord access probe</h1>
-<p>This development probe checks OAuth scope access, token refresh, and revocation.
-Presence publishing remains unverified.</p>
-<p>It requests Discord identity and Social SDK presence access. The presence scope
-also covers social features; review Discord's consent screen before authorizing.</p>
-${enabled ? `<form action="/probe/start" method="post">
-<label>Operator access key <input name="access_key" type="password" required autocomplete="off"></label>
-<button type="submit">Check Discord access</button>
-</form>` : '<p>The operator has disabled the probe.</p>'}
-</html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 }

@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { AuthorizationAttempt, AuthorizationAttemptStore } from '../oauth/attempts'
+import type { AuthorizationAttempt, AuthorizationAttemptStore } from '../../src/lib/server/oauth/attempts'
 
 export class OAuthAttempt extends DurableObject {
   async create(attempt: AuthorizationAttempt): Promise<void> {

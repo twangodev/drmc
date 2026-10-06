@@ -75,8 +75,15 @@ presence/activity route candidates. API specifications alone are not a complete
 statement of application eligibility or transport support.
 
 `bun run build` performs Wrangler's deployment dry run and writes ignored
-artifacts to `dist/`. It does not deploy anything. Miniflare needs permission to
+Worker artifacts to `dist/` and prerendered SvelteKit assets to `build/`.
+It does not deploy anything. Miniflare needs permission to
 bind local loopback ports.
+
+`bun run dev` builds the frontend before starting Wrangler. After frontend edits,
+run `bun run build:app` to refresh the assets served by the local Worker. The
+frontend and OAuth routes use the same origin; no second application server is
+needed. The frontend never receives the Discord client secret or operator key
+from the server.
 
 ## Hosted experiment
 
@@ -88,10 +95,16 @@ for the additional evidence needed before implementing the full service.
 
 ## Code organization
 
-`src/discord` contains provider calls using injected standard `fetch`.
-`src/oauth` defines the portable authorization-attempt contract. `src/probe`
+The root project uses Svelte 5 / SvelteKit with Tailwind 4. Pages are rendered at
+build time and served by Workers Static Assets. Dynamic API and OAuth paths run
+through the Worker first. `/api/probe` reports only probe readiness; credential
+validation remains in the backend. The authorization form submits directly to
+the Worker, and the callback retains its sanitized JSON evidence report.
+
+`src/lib/server/discord` contains provider calls using injected standard `fetch`.
+`src/lib/server/oauth` defines the portable authorization-attempt contract. `src/lib/server/probe`
 handles configuration, request validation, and evidence reporting.
-`src/cloudflare` implements durable storage; `src/index.ts` connects the adapter
+`worker/cloudflare` implements durable storage; `worker/index.ts` connects the adapter
 to the Worker entrypoint. Provider code and probe behavior have no Cloudflare
 imports or Bun runtime dependencies.
 

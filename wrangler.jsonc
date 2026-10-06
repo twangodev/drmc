@@ -1,8 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "drmc",
-  "main": "src/index.ts",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-10-05",
+  "assets": {
+    "directory": "./build",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/health", "/probe/start", "/probe/callback"],
+    "not_found_handling": "404-page"
+  },
   "durable_objects": {
     "bindings": [
       { "name": "OAUTH_ATTEMPTS", "class_name": "OAuthAttempt" }

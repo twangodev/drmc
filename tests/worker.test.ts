@@ -81,12 +81,19 @@ function createRuntime(context: TestContext, discord = new DiscordFixture(), ove
       config: {
         name: 'drmc',
         compatibilityDate: '2026-10-05',
+        assets: {
+          directory: new URL('../build/', import.meta.url).pathname,
+          hasUserWorker: true,
+          runWorkerFirst: ['/api/*', '/health', '/probe/start', '/probe/callback'],
+          notFoundHandling: '404-page',
+        },
         manifest: {
           mainModule: 'index.js',
           modules: { 'index.js': { type: 'esm', contents: readFileSync(new URL('../dist/index.js', import.meta.url), 'utf8') } },
         },
         exports: { OAuthAttempt: { type: 'durable-object', storage: 'sqlite' } },
         env: {
+          ASSETS: { type: 'assets' },
           OAUTH_ATTEMPTS: { type: 'durable-object', worker: 'drmc', exportName: 'OAuthAttempt' },
           ...Object.fromEntries(Object.entries({
             APP_ORIGIN: origin,
@@ -137,6 +144,42 @@ test('the disabled probe reports health without accepting OAuth attempts', async
   const start = await runtime.dispatchFetch(`${origin}/probe/start`, { method: 'POST' })
   assert.equal(start.status, 404)
   assert.deepEqual(await start.json(), { error: 'probe_disabled' })
+  assert.deepEqual(discord.requests, [])
+})
+
+test('public probe status exposes readiness without operator secrets or account IDs', async context => {
+  for (const [overrides, expected] of [
+    [{ PROBE_ENABLED: 'false' }, 'disabled'],
+    [{ PROBE_ALLOWED_DISCORD_IDS: '' }, 'unconfigured'],
+    [{}, 'ready'],
+  ] as const) {
+    const { runtime } = createRuntime(context, undefined, overrides)
+    const response = await runtime.dispatchFetch(`${origin}/api/probe`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { state: expected, publication: 'not_tested' })
+    assert.equal(response.headers.get('Cache-Control'), 'no-store')
+  }
+})
+
+test('prerendered pages serve through assets while callback and API routes stay protected', async context => {
+  const { runtime, discord } = createRuntime(context)
+  for (const path of ['/', '/probe']) {
+    const response = await runtime.dispatchFetch(`${origin}${path}`)
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get('Content-Type')!, /text\/html/)
+    const html = await response.text()
+    assert.match(html, /DRMC/)
+    assert.match(html, /content-security-policy/i)
+    assert.equal(html.includes(accessKey), false)
+    assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer')
+    assert.equal(response.headers.get('X-Frame-Options'), 'DENY')
+  }
+  const callbackResponse = await runtime.dispatchFetch(`${origin}/probe/callback`)
+  assert.equal(callbackResponse.status, 400)
+  assert.deepEqual(await callbackResponse.json(), { error: 'invalid_authorization_state' })
+  const missingApi = await runtime.dispatchFetch(`${origin}/api/missing`)
+  assert.equal(missingApi.status, 404)
+  assert.deepEqual(await missingApi.json(), { error: 'not_found' })
   assert.deepEqual(discord.requests, [])
 })
 
