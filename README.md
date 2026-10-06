@@ -72,12 +72,48 @@ account whose music will be shared. Browser sessions expire after 30 days.
 Credentials and session cookies use AES-GCM, with account-bound encryption for
 stored provider grants. Secrets never appear in account API responses.
 
-Each account owns a SQLite Durable Object. It polls Last.fm approximately every
-15–18 seconds, resolves album artwork, refreshes expiring Discord grants, and
+Each account owns a SQLite Durable Object. It polls the official Last.fm API every
+10 seconds by default, resolves album artwork, refreshes expiring Discord grants, and
 heartbeats its OAuth Gateway connection. Every 15 minutes it verifies the Last.fm
 session and stops sharing if that authorization was revoked. Alarms restore work after object eviction
 or deployment. Reconnects use bounded backoff. Temporary Last.fm failures preserve
-the most recent activity for about two minutes before clearing it.
+the most recent activity for about two minutes before clearing it. Last.fm's
+`Retry-After` is respected across preference changes and object restarts.
+
+## Music preferences
+
+The dashboard includes the music and presence controls from `lfm-cli` v1.7.0.
+Preferences belong to your Discord account and survive sign-out, reconnection,
+and deployment. Saving them applies changes on the next sync without resuming a
+paused account.
+
+| CLI option or behavior | DRMC control |
+| --- | --- |
+| `--user`, `-u` | Connect or change your verified Last.fm account |
+| `--refresh`, `-r` | Refresh interval, default 10 seconds, range 1–3,600 |
+| `--hide-profile` | Turn off Show profile button |
+| `--show-loved`, `-l` | Show loved-track heart, off by default |
+| `--rm-covers` | Turn off Show album covers |
+| `--rm-time` | Turn off Show elapsed time |
+| `--keep-status` | Keep status when idle, off by default |
+| `--debug`, `-d` | Show sync diagnostics and the latest 20 sanitized events |
+| Listening activity | Track title, artist, album artwork, and Last.fm badge |
+| Track button | View scrobble on Last.fm, alongside the optional profile button |
+| Reconnection | Automatic recovery with stable elapsed time and bounded backoff |
+
+Music comes exclusively from `user.getRecentTracks` with `extended=1`, which
+includes loved-track status. There is no website scraper or fallback service.
+The API does not expose website playback links or a reliable now-playing start
+time: the track button opens Last.fm, and elapsed time starts at the first
+observation, preserving that time across polls and reconnections. Playing the
+same track twice without an observed idle interval cannot be distinguished by
+the API. The idle activity and badge identify this service as DRMC.
+
+The dashboard previews covers, hearts, elapsed time, and buttons. Diagnostics
+show the latest successful check, next scheduled check, last activity sent,
+connection state, consecutive failures, and sanitized event history. Disabling
+diagnostics removes the history. The preview reflects the payload we send;
+Discord visibility still requires a real connected-account check.
 
 Pause clears the activity and stops syncing. Resume restarts it. Signing out
 invalidates the browser session while music sharing continues. Disconnect clears

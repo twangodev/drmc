@@ -12,6 +12,7 @@ export default {
         'default-src': ['self'],
         'script-src': ['self'],
         'style-src': ['self', 'unsafe-inline'],
+        'img-src': ['self', 'https://lastfm.freetls.fastly.net'],
         'object-src': ['none'],
         'base-uri': ['self'],
         'form-action': ['self', 'https://discord.com', 'https://www.last.fm'],

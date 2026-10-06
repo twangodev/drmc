@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test'
+import { defaultMusicPreferences } from '../../src/lib/music-preferences'
+import type { AccountView } from '../../src/lib/account'
 
 test('overview renders on narrow screens and explains cloud sharing without JavaScript', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 320, height: 740 } })
@@ -147,4 +149,58 @@ test('native account forms preserve the origin required by the Worker', async ({
     expect(sentOrigin, action.path).toBe('http://localhost:8787')
     await page.unroute('**/api/account')
   }
+})
+
+test('presence preferences submit all CLI controls with the native browser origin and preserve unsaved edits during refresh', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 740 })
+  await page.clock.install()
+  const account = { userId: '234567890123456789', lastfmUsername: 'twangodev', enabled: true, status: 'idle', connected: false, track: null, preferences: defaultMusicPreferences }
+  let refreshes = 0
+  await page.route('**/api/account', route => { refreshes++; return route.fulfill({ json: { enabled: true, account } }) })
+  await page.route('**/api/account/preferences', async route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers().origin).toBe('http://localhost:8787')
+    const preferences = Object.fromEntries(new URLSearchParams(route.request().postData()!))
+    expect(preferences).toEqual({ refreshInterval: '30', showLoved: 'on', keepStatus: 'on', debug: 'on' })
+    await route.fulfill({ contentType: 'text/html', body: '<h1>Preferences received</h1>' })
+  })
+  await page.goto('/app')
+  await expect(page.getByLabel('Show profile button')).toBeChecked()
+  await expect(page.getByLabel('Show loved-track heart')).not.toBeChecked()
+  await expect(page.getByLabel('Refresh interval (seconds)')).toHaveValue('10')
+  for (const label of ['Show profile button', 'Show album covers', 'Show elapsed time']) await page.getByLabel(label).uncheck()
+  for (const label of ['Show loved-track heart', 'Keep status when idle', 'Show sync diagnostics']) await page.getByLabel(label).check()
+  await page.getByLabel('Refresh interval (seconds)').fill('30')
+  await page.clock.runFor(10_000)
+  await expect.poll(() => refreshes).toBeGreaterThan(1)
+  await expect(page.getByLabel('Refresh interval (seconds)')).toHaveValue('30')
+  await expect(page.getByLabel('Show loved-track heart')).toBeChecked()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+  await page.getByRole('button', { name: 'Save preferences' }).click()
+  await expect(page.getByRole('heading', { name: 'Preferences received' })).toBeVisible()
+})
+
+test('activity preview shows loved tracks, elapsed time and profile controls with safe diagnostics', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 740 })
+  const startedAt = Date.now() - 65_000
+  const account: AccountView = { userId: '234567890123456789', lastfmUsername: 'twangodev', enabled: true, status: 'listening', connected: true,
+    track: { title: 'Kid A', artist: 'Radiohead', album: 'Kid A', loved: true, startedAt },
+    preferences: { ...defaultMusicPreferences, showLoved: true, showProfile: false, debug: true }, consecutiveFailures: 0,
+    lastCheckedAt: startedAt + 60_000, events: [{ at: startedAt, event: 'published' }] }
+  await page.route('**/api/account', route => route.fulfill({ json: { enabled: true, account } }))
+  await page.goto('/app?saved=preferences')
+  await expect(page.getByRole('status').filter({ hasText: 'Preferences saved.' })).toBeVisible()
+  await expect(page.getByText('Loved on Last.fm', { exact: true })).toBeVisible()
+  await expect(page.getByText(/1:0\d elapsed/)).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Visit last.fm Profile' })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'View scrobble on Last.fm' })).toHaveAttribute('href', 'https://www.last.fm/music/Radiohead/_/Kid%20A')
+  await expect(page.getByRole('heading', { name: 'Sync diagnostics' })).toBeVisible()
+  await expect(page.getByRole('list', { name: 'Recent sync events' })).toContainText('Activity sent')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+  account.status = 'idle'
+  account.track = null
+  account.preferences = { ...account.preferences, keepStatus: true }
+  await page.reload()
+  await expect(page.getByText('Playing Last.fm')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'View scrobble on Last.fm' })).toHaveCount(0)
 })

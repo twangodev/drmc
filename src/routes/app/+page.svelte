@@ -4,6 +4,9 @@
   import { page } from '$app/state'
   import { ArrowRight, Music2, Check, Pause, Play } from '@lucide/svelte'
   import type { AccountView } from '$lib/account'
+  import MusicPreferences from '$lib/components/MusicPreferences.svelte'
+  import MusicActivity from '$lib/components/MusicActivity.svelte'
+  import SyncDiagnostics from '$lib/components/SyncDiagnostics.svelte'
 
   let account = $state<AccountView | null>(null)
   let enabled = $state(false)
@@ -25,8 +28,11 @@
     invalid_authorization_state: 'That authorization link expired or has already been used. Please start again.',
     sign_in_required: 'Sign in with Discord before connecting Last.fm.',
     discord_cleanup_pending: 'Music sharing has stopped. We are still retrying the removal of your Discord authorization.',
+    invalid_music_preferences: 'Choose a whole-number refresh interval between 1 and 3,600 seconds and try again.',
+    service_unavailable: 'Your changes could not be saved. Please try again.',
   }
   const authorizationError = $derived(browser ? errors[page.url.searchParams.get('error') ?? ''] : undefined)
+  const preferencesSaved = $derived(browser && page.url.searchParams.get('saved') === 'preferences')
 
   async function refresh() {
     if (pending) return
@@ -62,6 +68,7 @@
   {#if authorizationError}
     <p role="alert" class="mt-6 rounded-md border border-subtle bg-surface p-4 text-sm">{authorizationError}</p>
   {/if}
+  {#if preferencesSaved}<p role="status" class="mt-6 rounded-md border border-subtle bg-surface p-4 text-sm">Preferences saved.</p>{/if}
   <noscript><p class="mt-6 text-sm text-muted">JavaScript is required to view your accounts and music sharing controls.</p></noscript>
 
   {#if loading}
@@ -92,7 +99,7 @@
           <div><h2 class="font-medium">Last.fm</h2><p class="mt-1 text-xs text-muted">{account?.lastfmUsername ? `Connected · ${account.lastfmUsername}` : 'Verify the account that tracks your music'}</p></div>
         </div>
         {#if account?.lastfmUsername && account.status !== 'lastfm_reauthorize'}
-          <span class="flex items-center gap-2 text-xs text-muted"><Check size={14} aria-hidden="true" />Connected</span>
+          <form method="post" action="/auth/lastfm/start"><button class="text-link text-xs">Change Last.fm account</button></form>
         {:else}
           <form method="post" action="/auth/lastfm/start"><button class="action action-secondary disabled:cursor-default disabled:opacity-40" disabled={!account}>{account?.status === 'lastfm_reauthorize' ? 'Reconnect Last.fm' : 'Connect Last.fm'}<ArrowRight size={14} aria-hidden="true" /></button></form>
         {/if}
@@ -106,17 +113,18 @@
           <Music2 size={24} class="text-muted" aria-hidden="true" />
         </div>
         {#if account.track && account.enabled}
-          <p class="mt-6 text-xl font-medium tracking-tight break-words">{account.track.title}</p>
-          <p class="mt-1 text-sm text-muted">by {account.track.artist}</p>
-          {#if account.track.album}<p class="mt-1 text-xs text-muted">{account.track.album}</p>{/if}
+          <MusicActivity track={account.track} username={account.lastfmUsername!} preferences={account.preferences} />
         {:else}
-          <p class="mt-4 text-sm leading-relaxed text-muted">{account.status === 'paused' ? 'Resume whenever you want to share your music again.' : account.status === 'reauthorize' ? 'Sign in with Discord again to restore music sharing.' : account.status === 'lastfm_reauthorize' ? 'Reconnect Last.fm above to restore music sharing.' : account.lastfmUsername ? 'Play a track using a player connected to Last.fm. Updates usually arrive within 20 seconds.' : 'Connect Last.fm above to finish setting up.'}</p>
+          <p class="mt-4 text-sm leading-relaxed text-muted">{account.status === 'paused' ? 'Resume whenever you want to share your music again.' : account.status === 'reauthorize' ? 'Sign in with Discord again to restore music sharing.' : account.status === 'lastfm_reauthorize' ? 'Reconnect Last.fm above to restore music sharing.' : account.lastfmUsername ? `Play a track using a player connected to Last.fm. We check for music every ${account.preferences?.refreshInterval ?? 10} seconds.` : 'Connect Last.fm above to finish setting up.'}</p>
+          {#if account.status === 'idle' && account.enabled && account.preferences?.keepStatus}<MusicActivity track={null} username={account.lastfmUsername!} preferences={account.preferences} />{/if}
         {/if}
         {#if account.failure && account.status === 'reconnecting'}<p class="mt-4 text-xs text-muted">We will retry automatically. Recent music stays visible briefly while the connection recovers.</p>{/if}
         {#if account.lastfmUsername && !['reauthorize', 'lastfm_reauthorize'].includes(account.status)}
           <form method="post" action={account.enabled ? '/api/account/pause' : '/api/account/resume'} class="mt-5"><button class="action action-secondary">{#if account.enabled}<Pause size={14} aria-hidden="true" />Pause sharing{:else}<Play size={14} aria-hidden="true" />Resume sharing{/if}</button></form>
         {/if}
       </section>
+      <MusicPreferences preferences={account.preferences} />
+      {#if account.preferences?.debug}<SyncDiagnostics {account} />{/if}
       <div class="mt-6 flex flex-wrap items-center justify-between gap-4 text-xs text-muted">
         <form method="post" action="/api/account/logout"><button class="text-link">Sign out</button></form>
         <form method="post" action="/api/account/disconnect"><button class="text-link">Disconnect accounts</button></form>
