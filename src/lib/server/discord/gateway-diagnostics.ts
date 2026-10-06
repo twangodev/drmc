@@ -90,6 +90,7 @@ export class DiscordGatewayDiagnostics {
 function activitySummary(value: unknown, requested?: DiscordActivity | null): DiscordPresenceActivity {
   const activity = gatewayObject(value)
   const buttons = Array.isArray(activity?.buttons) ? activity.buttons : []
+  const assets = gatewayObject(activity?.assets)
   return {
     fields: activity ? Object.keys(activity).filter(key => ['name', 'type', 'application_id', 'details', 'state', 'timestamps', 'assets', 'buttons', 'metadata'].includes(key)) : [],
     ...(typeof activity?.type === 'number' && Number.isSafeInteger(activity.type) ? { type: activity.type } : {}),
@@ -97,6 +98,9 @@ function activitySummary(value: unknown, requested?: DiscordActivity | null): Di
     detailsMatch: Boolean(requested && activity?.details === requested.details),
     stateMatches: Boolean(requested && activity?.state === requested.state),
     buttons: !buttons.length ? 'none' : buttons.every(button => typeof button === 'string') ? 'labels' : buttons.every(button => gatewayObject(button)) ? 'objects' : 'mixed',
+    applicationPresent: typeof activity?.application_id === 'string' && /^\d{17,20}$/.test(activity.application_id),
+    largeImage: imageKind(typeof assets?.large_image === 'string' ? assets.large_image : undefined),
+    smallImage: imageKind(typeof assets?.small_image === 'string' ? assets.small_image : undefined),
   }
 }
 

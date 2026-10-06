@@ -14,6 +14,9 @@ export interface DiscordPresenceActivity {
   detailsMatch: boolean
   stateMatches: boolean
   buttons: 'none' | 'labels' | 'objects' | 'mixed'
+  applicationPresent: boolean
+  largeImage: DiscordPresenceEvent['largeImage']
+  smallImage: DiscordPresenceEvent['smallImage']
 }
 
 export interface DiscordPresenceDiagnostics {

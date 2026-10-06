@@ -314,7 +314,7 @@ test('saved CLI preferences change live activities, preserve elapsed time, and p
   await eventually(() => providers.activity !== null)
   assert.deepEqual(providers.activity!.buttons, ['View scrobble on Last.fm'])
   assert.deepEqual(providers.activity!.metadata, { button_urls: ['https://www.last.fm/music/Radiohead/_/Kid%20A'] })
-  assert.equal(providers.activity!.application_id, undefined)
+  assert.equal(providers.activity!.application_id, applicationId)
   assert.deepEqual(providers.activity!.assets, { small_image: '970173669169053717', small_text: 'DRMC • 1.0.0' })
   assert.equal(providers.activity!.timestamps, undefined)
   assert.equal(providers.artworkRequests, 0)

@@ -130,6 +130,8 @@ Album-art URLs from the official Last.fm API are sent directly in the activity,
 as in lfm-cli. [Discord proxies external images](https://docs.discord.com/developers/events/gateway-events#activity-asset-image);
 DRMC does not register or cache album images. Registered Last.fm logo and heart
 assets are cached separately, and the logo is used when no cover is available.
+The Gateway transport attaches the authorized application's ID so Discord can
+resolve its registered logo and heart assets.
 
 The Discord OAuth Gateway protocol is adapted from
 [Discord-Social-RPC 0.2.3](https://github.com/LeonLeBreton/Discord-Social-RPC/tree/b4996e61547505742b141378fe073650808adfd4).

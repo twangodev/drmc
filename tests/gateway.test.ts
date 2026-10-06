@@ -16,7 +16,8 @@ test('Gateway activity buttons use aligned labels and URL metadata without chang
     buttons: [{ label: 'Profile', url: 'https://www.last.fm/user/listener' }, { label: 'Track', url: 'https://www.last.fm/music/Artist/_/Track' }],
   }
   const original = structuredClone(activity)
-  const sent = updateGatewayPresence(activity).d.activities[0]!
+  const sent = updateGatewayPresence(activity, authorization.applicationId).d.activities[0]!
+  assert.equal(sent.application_id, authorization.applicationId)
   assert.deepEqual(sent.buttons, ['Profile', 'Track'])
   assert.deepEqual(sent.metadata, { button_urls: activity.buttons.map(button => button.url) })
   assert.deepEqual(sent.assets, activity.assets)
@@ -222,6 +223,7 @@ test('a persistent OAuth session accepts track changes and explicit idle clears'
   const session = await openDiscordPresence(async () => socket, authorization)
   assert.equal(socket.frames.some(frame => frame.op === 3), false)
   session.update({ name: 'Last.fm', type: 2, details: 'Kid A', state: 'by Radiohead', timestamps: { start: 1234 } })
+  assert.equal((socket.frames.find(frame => frame.op === 3)!.d as { activities: { application_id: string }[] }).activities[0]!.application_id, authorization.applicationId)
   await new Promise(resolve => setTimeout(resolve, 30))
   assert.ok(session.diagnostics().lastHeartbeatAcknowledgedAt)
   assert.ok(session.diagnostics().lastActivitySentAt)

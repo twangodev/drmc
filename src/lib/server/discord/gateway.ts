@@ -113,7 +113,7 @@ class GatewayProbeSession {
 
   private update(activity: DiscordActivity | null): void {
     if (this.finished || !this.report.connected) throw new DiscordGatewayFailure({ reason: 'gateway_closed' })
-    this.send(updateGatewayPresence(activity))
+    this.send(updateGatewayPresence(activity, this.authorization.applicationId))
     this.diagnostics.activitySent(activity)
     if (activity) this.report.activitySent = true
   }
