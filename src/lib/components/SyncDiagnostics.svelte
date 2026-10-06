@@ -18,6 +18,8 @@
     <div><dt class="text-muted">Next check</dt><dd class="mt-1 font-mono">{time(account.nextCheckAt)}</dd></div>
     <div><dt class="text-muted">Last activity sent</dt><dd class="mt-1 font-mono">{time(account.publishedAt)}</dd></div>
     <div><dt class="text-muted">Last failure</dt><dd class="mt-1 break-words">{account.failure ?? 'None'}</dd></div>
+    <div><dt class="text-muted">Discord heartbeat acknowledged</dt><dd class="mt-1 font-mono">{time(account.presence?.lastHeartbeatAcknowledgedAt)}</dd></div>
+    <div><dt class="text-muted">Activity echoed by Discord</dt><dd class="mt-1">{account.presence?.activityObservedAt ? time(account.presence.activityObservedAt) : 'No echo received'}</dd></div>
   </dl>
   {#if account.events.length}
     <ol class="mt-5 space-y-3 border-t border-subtle pt-5 text-xs" aria-label="Recent sync events">

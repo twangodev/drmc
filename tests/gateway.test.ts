@@ -202,6 +202,9 @@ test('a persistent OAuth session accepts track changes and explicit idle clears'
   assert.equal(socket.frames.some(frame => frame.op === 3), false)
   session.update({ name: 'Last.fm', type: 2, details: 'Kid A', state: 'by Radiohead', timestamps: { start: 1234 } })
   await new Promise(resolve => setTimeout(resolve, 30))
+  assert.ok(session.diagnostics().lastHeartbeatAcknowledgedAt)
+  assert.ok(session.diagnostics().lastActivitySentAt)
+  assert.equal(session.diagnostics().activityObservedAt, undefined)
   session.update(null)
   session.close()
   const report = await session.closed

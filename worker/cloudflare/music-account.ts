@@ -253,7 +253,7 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
 
   private async ensurePresence(accessToken: string): Promise<void> {
     if (this.live) return
-    const live = await openDiscordPresence(connectDiscordGateway, { applicationId: this.env.DISCORD_CLIENT_ID!, userId: this.record!.userId, accessToken })
+    const live = await openDiscordPresence(connectDiscordGateway, { applicationId: this.env.DISCORD_CLIENT_ID!, userId: this.record!.userId, accessToken }, event => console.info({ service: 'drmc', ...event }))
     this.live = live
     this.published = undefined
     this.observe('connected')
@@ -296,10 +296,12 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
     return { userId: record.userId, lastfmUsername: record.lastfmUsername, enabled: record.enabled, connected: Boolean(this.live), status: record.status,
       track: record.track, preferences: this.preferences(),
       lastCheckedAt: record.lastCheckedAt, nextCheckAt: record.nextCheckAt, publishedAt: record.publishedAt,
-      consecutiveFailures: record.failures, events: this.preferences().debug ? record.events ?? [] : [], failure: record.failure }
+      consecutiveFailures: record.failures, events: this.preferences().debug ? record.events ?? [] : [], failure: record.failure,
+      presence: this.live?.diagnostics() }
   }
   private preferences(): MusicPreferences { return { ...defaultMusicPreferences, ...this.record?.preferences } }
   private observe(event: SyncEvent['event'], reason?: string): void {
+    if (['failed', 'disconnected'].includes(event) && reason && /^[a-z_]{1,64}$/.test(reason)) console.warn({ service: 'drmc', event, reason })
     if (!this.record || !this.preferences().debug) return
     const entry: SyncEvent = { at: Date.now(), event, ...(reason && /^[a-z_]{1,64}$/.test(reason) ? { reason } : {}) }
     this.record.events = [...(this.record.events ?? []), entry].slice(-20)

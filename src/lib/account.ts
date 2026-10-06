@@ -1,5 +1,6 @@
 import type { ListeningTrack } from './music'
 import type { MusicPreferences } from './music-preferences'
+import type { DiscordPresenceDiagnostics } from './discord-presence'
 
 export interface SyncEvent {
   at: number
@@ -21,4 +22,5 @@ export interface AccountView {
   consecutiveFailures: number
   events: SyncEvent[]
   failure?: string
+  presence?: DiscordPresenceDiagnostics
 }

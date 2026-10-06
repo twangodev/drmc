@@ -112,8 +112,12 @@ the API. The idle activity and badge identify this service as DRMC.
 The dashboard previews covers, hearts, elapsed time, and buttons. Diagnostics
 show the latest successful check, next scheduled check, last activity sent,
 connection state, consecutive failures, and sanitized event history. Disabling
-diagnostics removes the history. The preview reflects the payload we send;
-Discord visibility still requires a real connected-account check.
+diagnostics removes the history. Connection details also expose the last
+Discord heartbeat acknowledgement and any matching activity echo. Sending an
+activity does not prove that Discord displays it. Gateway logs retain response
+event names and payload field types without credentials, music titles, or URLs.
+The preview reflects the payload we send; Discord visibility still requires a
+real connected-account check.
 
 Pause clears the activity and stops syncing. Resume restarts it. Signing out
 invalidates the browser session while music sharing continues. Disconnect clears

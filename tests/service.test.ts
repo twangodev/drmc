@@ -153,6 +153,11 @@ test('accounts link, publish from an alarm, pause, resume, logout without stoppi
   assert.equal(providers.activity!.state, 'by Radiohead')
   assert.equal((providers.activity!.assets as { large_image: string }).large_image, providers.artworkUrl)
   assert.equal(providers.artworkRequests, 0)
+  const presence = (await account(runtime, signedIn.cookies)).account!.presence!
+  assert.ok(presence.connectedAt)
+  assert.ok(presence.lastActivitySentAt)
+  assert.equal(presence.activityObservedAt, undefined)
+  assert.equal(presence.dispatches[0]!.event, 'READY')
   assert.equal((await account(runtime, signedIn.cookies)).account!.lastfmUsername, 'twangodev')
   const publicResponse = JSON.stringify(await account(runtime, signedIn.cookies))
   assert.equal(/access-token|refresh-token|credentials|session|PRIVATE/.test(publicResponse), false)
