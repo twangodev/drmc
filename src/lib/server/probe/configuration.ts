@@ -17,9 +17,12 @@ export interface ProbeConfiguration {
 }
 
 export class InvalidProbeConfiguration extends Error {
-  constructor(readonly fields: string[]) {
+  readonly fields: string[]
+
+  constructor(fields: string[]) {
     super('The Discord probe is not configured')
     this.name = 'InvalidProbeConfiguration'
+    this.fields = fields
   }
 }
 

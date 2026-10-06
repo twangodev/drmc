@@ -11,11 +11,16 @@
     "start": "bun run dev",
     "dev": "bun run build:app && wrangler dev --ip 127.0.0.1 --port 8787",
     "build:app": "vite build",
+    "build:worker": "wrangler deploy --dry-run --outdir=dist",
+    "build:release": "bun run build:app && bun run build:worker && node scripts/stamp-release.ts",
     "check": "tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.tools.json && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "audit:discord": "node scripts/audit-discord-api.ts",
-    "build": "bun run check && bun run build:app && wrangler deploy --dry-run --outdir=dist",
-    "test": "bun run build && node --test tests/*.test.ts",
-    "test:web": "playwright test"
+    "build": "bun run check && bun run build:app && bun run build:worker",
+    "test": "bun run build && bun run test:worker",
+    "test:worker": "node --test tests/*.test.ts",
+    "test:web": "playwright test",
+    "deploy": "node scripts/deploy.ts",
+    "check:deployment": "node scripts/check-deployment.ts"
   },
   "dependencies": {},
   "devDependencies": {

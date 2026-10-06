@@ -1,0 +1,168 @@
+name: Svelte
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: svelte-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  check:
+    name: Type and Svelte checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+
+  build:
+    name: Build release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run build:release
+      - name: Upload tested release
+        uses: actions/upload-artifact@v7
+        with:
+          name: drmc-release
+          path: |
+            build/
+            dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  worker:
+    name: Worker and deployment tests
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: drmc-release
+      - run: bun run test:worker
+
+  browser:
+    name: Browser tests
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: drmc-release
+      - name: Install Chromium
+        run: bunx --no-install playwright install --with-deps chromium
+      - run: bun run test:web
+      - name: Upload browser failures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failures
+          path: test-results/
+          retention-days: 3
+
+  deploy:
+    name: Deploy to Cloudflare
+    needs: [check, build, worker, browser]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.origin }}
+    outputs:
+      origin: ${{ steps.deploy.outputs.origin }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: drmc-release
+      - name: Deploy the verified release
+        id: deploy
+        run: bun run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+          APP_ORIGIN: ${{ vars.APP_ORIGIN }}
+          PROBE_ENABLED: ${{ vars.PROBE_ENABLED || 'false' }}
+          DISCORD_CLIENT_ID: ${{ vars.DISCORD_CLIENT_ID }}
+          PROBE_ALLOWED_DISCORD_IDS: ${{ vars.PROBE_ALLOWED_DISCORD_IDS }}
+          DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
+          PROBE_ACCESS_KEY: ${{ secrets.PROBE_ACCESS_KEY }}
+
+  verify:
+    name: Verify hosted release
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Check deployed pages and Worker
+        run: node scripts/check-deployment.ts
+        env:
+          APP_ORIGIN: ${{ needs.deploy.outputs.origin }}

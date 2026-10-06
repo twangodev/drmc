@@ -3,6 +3,7 @@
   "name": "drmc",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-05",
+  "workers_dev": true,
   "assets": {
     "directory": "./build",
     "binding": "ASSETS",

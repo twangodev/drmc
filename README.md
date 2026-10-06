@@ -93,11 +93,38 @@ from the server.
 
 ## Hosted experiment
 
-Use an HTTPS `APP_ORIGIN` and register the matching `/probe/callback` redirect in
-Discord. Set the client secret and operator key with Wrangler secrets. Keep the
-probe disabled until test accounts are configured. Deploy only for a controlled
-OAuth experiment; it still cannot publish presence. See the feasibility document
-for the additional evidence needed before implementing the full service.
+The single `.github/workflows/svelte.yaml` workflow checks types, builds one
+release artifact, runs Worker and browser tests, deploys that artifact to
+Cloudflare, and verifies the hosted pages, API routing, and source revision.
+Pushes to `main` and manual runs on `main` deploy; pull requests only run checks.
+
+Set these repository or `production` environment settings in GitHub:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | A Workers deployment token for the target account |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | The target Cloudflare account ID |
+| Optional variable | `APP_ORIGIN` | Override the automatically discovered `https://drmc.<subdomain>.workers.dev` origin |
+
+The workflow discovers the account's Workers subdomain and reports the hosted
+URL. The first deployment serves the UI with the probe disabled. To enable a
+controlled OAuth experiment, register the hosted `/probe/callback` URL in Discord,
+set GitHub variables `DISCORD_CLIENT_ID`, `PROBE_ALLOWED_DISCORD_IDS`, and
+`PROBE_ENABLED=true`, and secrets `DISCORD_CLIENT_SECRET` and `PROBE_ACCESS_KEY`.
+Deployment validates this configuration before uploading. Provider secrets are
+uploaded through a temporary private file, never as command-line arguments.
+Successful OAuth still does not establish presence publishing support.
+
+For a manual deployment using an authenticated Wrangler session:
+
+```sh
+bun run build:release
+APP_ORIGIN='https://drmc.<subdomain>.workers.dev' CLOUDFLARE_ACCOUNT_ID='<account_id>' bun run deploy
+APP_ORIGIN='https://drmc.<subdomain>.workers.dev' bun run check:deployment
+```
+
+Use the actual origin and account ID in place of the placeholders. The deploy
+command uploads the already-built Worker and assets; it does not rebuild them.
 
 ## Code organization
 
