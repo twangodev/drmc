@@ -1,8 +1,10 @@
 # DRMC
 
-Connect Discord and Last.fm at `/app` to share your music as a Discord Listening
+Log in with Discord and connect Last.fm at `/` or `/app` to share your music as a Discord Listening
 activity. The service runs entirely on Cloudflare Workers and Durable Objects,
 including polling and the Discord connection after your browser closes.
+Preferences and account controls live under **Settings**. The operator probe
+remains available at `/probe`.
 
 ## Development
 

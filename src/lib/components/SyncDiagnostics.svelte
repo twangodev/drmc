@@ -8,9 +8,8 @@
   function time(value?: number): string { return value ? new Date(value).toLocaleTimeString() : '—' }
 </script>
 
-<section class="mt-6 rounded-lg border border-subtle p-5 sm:p-6" aria-labelledby="diagnostics-title">
-  <p class="eyebrow">Connection health</p>
-  <h2 id="diagnostics-title" class="mt-2 font-medium">Sync diagnostics</h2>
+<section class="mt-6 border-t border-subtle pt-5" aria-labelledby="diagnostics-title">
+  <h2 id="diagnostics-title" class="text-sm font-medium">Sync diagnostics</h2>
   <dl class="mt-5 grid grid-cols-2 gap-x-5 gap-y-4 text-xs">
     <div><dt class="text-muted">Discord</dt><dd class="mt-1">{account.connected ? 'Connected' : 'Disconnected'}</dd></div>
     <div><dt class="text-muted">Consecutive failures</dt><dd class="mt-1">{account.consecutiveFailures}</dd></div>

@@ -2,12 +2,14 @@ import { expect, test } from '@playwright/test'
 import { defaultMusicPreferences } from '../../src/lib/music-preferences'
 import type { AccountView } from '../../src/lib/account'
 
-test('overview renders on narrow screens and explains cloud sharing without JavaScript', async ({ browser }) => {
+test('minimal sign-in works on narrow screens without JavaScript', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 320, height: 740 } })
   const page = await context.newPage()
   await page.goto('http://localhost:8787/')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Your music,on Discord.')
-  await expect(page.getByRole('heading', { name: 'Your music keeps going. So do we.' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Your music, on Discord.')
+  await expect(page.getByRole('button', { name: 'Log in with Discord' })).toBeEnabled()
+  await expect(page.locator('form[action="/auth/discord/start"]')).toHaveAttribute('method', 'post')
+  await expect(page.getByRole('navigation')).toHaveCount(0)
   const overflows = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)
   expect(overflows).toBe(false)
   await page.goto('http://localhost:8787/probe')
@@ -27,7 +29,7 @@ test('theme and fonts work under the production CSP and preference survives relo
   await expect(page.getByRole('button', { name: 'Use dark theme' })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   expect(await page.evaluate(() => document.fonts.check('16px "Overused Grotesk"'))).toBe(true)
-  await page.getByRole('link', { name: 'Access probe' }).click()
+  await page.goto('/probe')
   await expect(page.getByRole('status')).toHaveText('Probe disabled')
   await expect(page.getByRole('button', { name: 'Continue to Discord' })).toBeDisabled()
   expect(errors).toEqual([])
@@ -92,17 +94,18 @@ for (const publish of [false, true]) {
 }
 
 
-test('account linking uses native forms and only enables Last.fm after Discord sign-in', async ({ page }) => {
+test('sign-in shows a single action and Last.fm linking appears only after Discord sign-in', async ({ page }) => {
   await page.route('**/api/account', route => route.fulfill({ status: 401, json: { enabled: true, account: null } }))
-  await page.goto('/app')
-  await expect(page.getByRole('button', { name: 'Connect Discord' })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Connect Last.fm' })).toBeDisabled()
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Log in with Discord' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Connect Last.fm' })).toHaveCount(0)
   await expect(page.locator('form[action="/auth/discord/start"]')).toHaveAttribute('method', 'post')
   await page.unroute('**/api/account')
   await page.route('**/api/account', route => route.fulfill({ json: { enabled: true, account: { userId: '234567890123456789', enabled: true, status: 'link_lastfm', connected: false, track: null } } }))
-  await page.reload()
+  await page.goto('/app')
   await expect(page.getByRole('button', { name: 'Connect Last.fm' })).toBeEnabled()
   await expect(page.locator('form[action="/auth/lastfm/start"]')).toHaveAttribute('method', 'post')
+  await expect(page.getByRole('button', { name: 'Log in with Discord' })).toHaveCount(0)
 })
 
 test('the account dashboard shows music, pause controls, and safe authorization errors on narrow screens', async ({ page }) => {
@@ -123,12 +126,13 @@ test('account provider redirects are allowed by the effective production content
   const policy = await page.locator('meta[http-equiv="content-security-policy" i]').getAttribute('content')
   expect(policy).toMatch(/form-action[^;]+https:\/\/discord\.com/)
   expect(policy).toMatch(/form-action[^;]+https:\/\/www\.last\.fm/)
+  expect(policy).toMatch(/img-src[^;]+https:\/\/lastfm-img\.freetls\.fastly\.net/)
 })
 
 test('native account forms preserve the origin required by the Worker', async ({ page }) => {
   const linkedAccount = { userId: '234567890123456789', lastfmUsername: 'twangodev', enabled: true, status: 'idle', connected: false, track: null }
   const actions = [
-    { button: 'Connect Discord', path: '/auth/discord/start', account: null },
+    { button: 'Log in with Discord', path: '/auth/discord/start', account: null },
     { button: 'Connect Last.fm', path: '/auth/lastfm/start', account: { ...linkedAccount, lastfmUsername: undefined, status: 'link_lastfm' } },
     { button: 'Pause sharing', path: '/api/account/pause', account: linkedAccount },
     { button: 'Resume sharing', path: '/api/account/resume', account: { ...linkedAccount, enabled: false, status: 'paused' } },
@@ -144,6 +148,7 @@ test('native account forms preserve the origin required by the Worker', async ({
       await route.fulfill({ contentType: 'text/html', body: '<h1>Account action received</h1>' })
     })
     await page.goto('/app')
+    if (['Sign out', 'Disconnect accounts'].includes(action.button)) await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('button', { name: action.button, exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Account action received' })).toBeVisible()
     expect(sentOrigin, action.path).toBe('http://localhost:8787')
@@ -165,20 +170,35 @@ test('presence preferences submit all CLI controls with the native browser origi
     await route.fulfill({ contentType: 'text/html', body: '<h1>Preferences received</h1>' })
   })
   await page.goto('/app')
+  await expect(page.getByRole('form', { name: 'Presence preferences' })).not.toBeVisible()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(page.getByLabel('Show profile button')).toBeChecked()
   await expect(page.getByLabel('Show loved-track heart')).not.toBeChecked()
   await expect(page.getByLabel('Refresh interval (seconds)')).toHaveValue('10')
-  await expect(page.getByLabel('Listening status', { exact: true })).toHaveValue('song')
-  await page.getByLabel('Listening status', { exact: true }).selectOption('artist')
+  const listeningStatus = page.getByRole('button', { name: 'Listening status', exact: true })
+  await expect(listeningStatus).toHaveText('Song title')
+  await listeningStatus.focus()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  await expect(listeningStatus).toHaveText('Artist')
+  await expect(listeningStatus).toBeFocused()
   for (const label of ['Show profile button', 'Show album covers', 'Show elapsed time']) await page.getByLabel(label).uncheck()
   for (const label of ['Show loved-track heart', 'Keep status when idle', 'Show sync diagnostics']) await page.getByLabel(label).check()
   await page.getByLabel('Refresh interval (seconds)').fill('30')
   await page.clock.runFor(10_000)
   await expect.poll(() => refreshes).toBeGreaterThan(1)
   await expect(page.getByLabel('Refresh interval (seconds)')).toHaveValue('30')
-  await expect(page.getByLabel('Listening status', { exact: true })).toHaveValue('artist')
+  await expect(listeningStatus).toHaveText('Artist')
   await expect(page.getByLabel('Show loved-track heart')).toBeChecked()
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await expect(listeningStatus).toHaveText('Artist')
+  await listeningStatus.click()
+  await expect(page.getByRole('option', { name: 'Artist', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(listeningStatus).toBeFocused()
   await page.getByRole('button', { name: 'Save preferences' }).click()
   await expect(page.getByRole('heading', { name: 'Preferences received' })).toBeVisible()
 })
@@ -186,8 +206,10 @@ test('presence preferences submit all CLI controls with the native browser origi
 test('activity preview shows loved tracks, elapsed time and profile controls with safe diagnostics', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 })
   const startedAt = Date.now() - 65_000
+  const artwork = 'https://lastfm-img.freetls.fastly.net/i/u/300x300/browser-test.png'
+  await page.route(artwork, route => route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64') }))
   const account: AccountView = { userId: '234567890123456789', lastfmUsername: 'twangodev', enabled: true, status: 'listening', connected: true,
-    track: { title: 'Kid A', artist: 'Radiohead', album: 'Kid A', loved: true, startedAt },
+    track: { title: 'Kid A', artist: 'Radiohead', album: 'Kid A', artwork, loved: true, startedAt },
     preferences: { ...defaultMusicPreferences, showLoved: true, showProfile: false, debug: true }, consecutiveFailures: 0,
     lastCheckedAt: startedAt + 60_000, events: [{ at: startedAt, event: 'published' }] }
   await page.route('**/api/account', route => route.fulfill({ json: { enabled: true, account } }))
@@ -195,9 +217,11 @@ test('activity preview shows loved tracks, elapsed time and profile controls wit
   await expect(page.getByRole('status').filter({ hasText: 'Preferences saved.' })).toBeVisible()
   await expect(page.getByText('Loved on Last.fm', { exact: true })).toBeVisible()
   await expect(page.getByText('Listening to Kid A', { exact: true })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Kid A', exact: true })).toBeVisible()
+  await expect.poll(() => page.getByRole('img', { name: 'Kid A', exact: true }).evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
   await expect(page.getByText(/1:0\d elapsed/)).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Visit last.fm Profile' })).toHaveCount(0)
-  await expect(page.getByRole('link', { name: 'View scrobble on Last.fm' })).toHaveAttribute('href', 'https://www.last.fm/music/Radiohead/_/Kid%20A')
+  await expect(page.getByRole('link', { name: 'Last.fm profile' })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'View track' })).toHaveAttribute('href', 'https://www.last.fm/music/Radiohead/_/Kid%20A')
   await expect(page.getByRole('heading', { name: 'Sync diagnostics' })).toBeVisible()
   await expect(page.getByRole('list', { name: 'Recent sync events' })).toContainText('Activity sent')
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
@@ -209,5 +233,5 @@ test('activity preview shows loved tracks, elapsed time and profile controls wit
   account.preferences = { ...account.preferences, keepStatus: true }
   await page.reload()
   await expect(page.getByText('Playing Last.fm')).toBeVisible()
-  await expect(page.getByRole('link', { name: 'View scrobble on Last.fm' })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'View track' })).toHaveCount(0)
 })

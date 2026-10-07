@@ -14,11 +14,11 @@
   })
 </script>
 
-<div class="mt-6 border-t border-subtle pt-5" aria-label="Discord activity preview">
-  <p class="eyebrow break-words">{track ? `Listening to ${listeningActivityName(track, preferences.statusDisplay)}` : 'Playing Last.fm'}</p>
+<div class="mt-4" aria-label="Discord activity preview">
+  <p class="text-xs text-muted break-words">{track ? `Listening to ${listeningActivityName(track, preferences.statusDisplay)}` : 'Playing Last.fm'}</p>
   <div class="mt-3 flex items-start gap-4">
     {#if preferences.showCovers || !track}
-      <div class="relative size-20 shrink-0 rounded-md bg-raised">
+      <div class="relative size-16 shrink-0 rounded-md bg-raised">
         {#if artwork}<img src={artwork} alt={track?.album || 'Album cover'} class="size-full rounded-md object-cover" referrerpolicy="no-referrer" onerror={() => { failedArtwork = artwork }} />
         {:else}<div class="flex size-full items-center justify-center font-semibold text-muted">last.fm</div>{/if}
         {#if track}<span class="absolute -right-1 -bottom-1 flex size-6 items-center justify-center rounded-full border-2 border-surface bg-raised">{#if preferences.showLoved && track.loved}<Heart size={12} fill="currentColor" aria-label="Loved track" />{:else}<Music2 size={12} aria-hidden="true" />{/if}</span>{/if}
@@ -33,9 +33,9 @@
     </div>
   </div>
   {#if track}
-    <div class="mt-4 flex flex-wrap gap-2">
-      {#if preferences.showProfile}<a class="action action-secondary text-xs" href={lastfmProfileUrl(username)} target="_blank" rel="noopener noreferrer">Visit last.fm Profile</a>{/if}
-      <a class="action action-secondary text-xs" href={track.url ?? lastfmTrackUrl(track)} target="_blank" rel="noopener noreferrer">View scrobble on Last.fm</a>
+    <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted">
+      {#if preferences.showProfile}<a class="text-link" href={lastfmProfileUrl(username)} target="_blank" rel="noopener noreferrer">Last.fm profile</a>{/if}
+      <a class="text-link" href={track.url ?? lastfmTrackUrl(track)} target="_blank" rel="noopener noreferrer">View track</a>
     </div>
   {/if}
 </div>
