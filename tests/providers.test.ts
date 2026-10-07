@@ -11,6 +11,7 @@ const apiSecret = 'c'.repeat(32)
 
 test('Last.fm web authentication and AES credentials run in workerd without exposing secrets', async context => {
   let providerMode = 'playing'
+  let profileCount: unknown = '54321'
   const modules: Record<string, { type: 'esm'; contents: string }> = {}
   for (const name of ['src/lib/server/lastfm/client', 'src/lib/server/accounts/credentials', 'src/lib/server/discord/gateway-protocol', 'src/lib/music']) {
     modules[`${name}.js`] = { type: 'esm', contents: stripTypeScriptTypes(readFileSync(`${name}.ts`, 'utf8')).replaceAll('.ts\'', '.js\'') }
@@ -32,7 +33,7 @@ test('Last.fm web authentication and AES credentials run in workerd without expo
         return Response.json({distinct:first!==second,encrypted:!first.includes('secret-value'),opened,rejected,tamperRejected});
       }
       if(path==='/session')return Response.json(await client.exchange('${token}'));
-      try{return Response.json({track:await client.nowPlaying('twangodev')})}catch(error){return Response.json({reason:error.reason},{status:502})}
+      try{return Response.json(path==='/scrobbles'?{scrobbles:await client.scrobbleCount('twangodev')}:{track:await client.nowPlaying('twangodev')})}catch(error){return Response.json({reason:error.reason},{status:502})}
     }};` }
   const runtime = new Miniflare({ telemetry: { enabled: false }, cf: false, workers: [{ config: { name: 'providers', compatibilityDate: '2026-10-05', manifest: { mainModule: 'index.js', modules } }, dev: { outboundService: { type: 'fetcher', handler: async (request: RuntimeRequest) => {
     assert.equal(request.url, 'https://ws.audioscrobbler.com/2.0/')
@@ -42,6 +43,12 @@ test('Last.fm web authentication and AES credentials run in workerd without expo
       const expected = createHash('md5').update(`api_key${apiKey}methodauth.getSessiontoken${token}${apiSecret}`).digest('hex')
       assert.equal(parameters.get('api_sig'), expected)
       return RuntimeResponse.json({ session: { name: 'twangodev', key: token } })
+    }
+    if(parameters.get('method')==='user.getInfo') {
+      assert.equal(parameters.get('user'), 'twangodev')
+      assert.equal(parameters.has('sk'), false)
+      assert.equal(parameters.has('api_sig'), false)
+      return RuntimeResponse.json({user:{name:'TwangoDev',playcount:profileCount}})
     }
     assert.equal(parameters.get('method'), 'user.getrecenttracks')
     assert.equal(parameters.get('user'), 'twangodev')
@@ -59,4 +66,7 @@ test('Last.fm web authentication and AES credentials run in workerd without expo
   providerMode = 'idle'; assert.deepEqual(await fetchJson('/track'), { track: null })
   providerMode = 'malformed'; assert.deepEqual(await fetchJson('/track'), { reason: 'invalid_track_response' })
   providerMode = 'failure'; assert.deepEqual(await fetchJson('/track'), { reason: 'rate_limited' })
+  assert.deepEqual(await fetchJson('/scrobbles'), { scrobbles: 54321 })
+  profileCount = '0'; assert.deepEqual(await fetchJson('/scrobbles'), { scrobbles: 0 })
+  for (profileCount of ['', null, -1, '12.5', '9007199254740992']) assert.deepEqual(await fetchJson('/scrobbles'), { reason: 'invalid_profile_response' })
 })

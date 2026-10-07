@@ -3,7 +3,7 @@ import type { AccountView, SyncEvent } from '../../src/lib/account'
 import { defaultMusicPreferences, type MusicPreferences } from '../../src/lib/music-preferences'
 import { musicObservationLifetimeMs, sameMusicTrack } from '../../src/lib/music'
 import { CredentialVault } from '../../src/lib/server/accounts/credentials'
-import { requireServiceConfiguration, type ServiceSettings } from '../../src/lib/server/accounts/configuration'
+import { requireServiceConfiguration } from '../../src/lib/server/accounts/configuration'
 import { randomToken } from '../../src/lib/server/oauth/attempts'
 import { DiscordOAuthClient, DiscordOAuthFailure, discordPresenceScopes, type DiscordAuthorization, type DiscordTokens } from '../../src/lib/server/discord/oauth'
 import { openDiscordPresence, DiscordGatewayFailure, type LiveDiscordPresence } from '../../src/lib/server/discord/gateway'
@@ -12,6 +12,8 @@ import { DiscordExternalAssets } from '../../src/lib/server/discord/external-ass
 import { musicActivity } from '../../src/lib/server/discord/music-activity'
 import { LastfmClient, LastfmFailure, type LastfmSession, type ListeningTrack } from '../../src/lib/server/lastfm/client'
 import { connectDiscordGateway } from './discord-gateway'
+import { statisticsRefreshIntervalMs, type StatisticsReport } from '../../src/lib/platform-statistics'
+import { communityStatistics, type StatisticsSettings } from './community-statistics'
 
 interface Credentials { discord: DiscordTokens; lastfm?: LastfmSession }
 const lastfmVerificationIntervalMs = 15 * 60_000
@@ -34,17 +36,19 @@ interface AccountRecord {
   publishedAt?: number
   events?: SyncEvent[]
   pollNotBefore?: number
+  statisticsReportedAt?: number
 }
 
-export class MusicAccount extends DurableObject<ServiceSettings> {
+export class MusicAccount extends DurableObject<StatisticsSettings> {
   private record?: AccountRecord
   private live?: LiveDiscordPresence
   private queue: Promise<unknown> = Promise.resolve()
   private readonly applicationAssets = new DiscordApplicationAssets()
   private readonly externalAssets = new DiscordExternalAssets()
   private published?: string
+  private statisticsState?: string
 
-  constructor(ctx: DurableObjectState, env: ServiceSettings) {
+  constructor(ctx: DurableObjectState, env: StatisticsSettings) {
     super(ctx, env)
     ctx.blockConcurrencyWhile(async () => { this.record = await ctx.storage.get<AccountRecord>('account') })
   }
@@ -64,6 +68,7 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
         lastfmVerifiedAt: previousRecord?.lastfmVerifiedAt, pollNotBefore: previousRecord?.pollNotBefore, failures: 0,
         preferences: this.preferences(),
         events: previousRecord?.events, publishedAt: previousRecord?.publishedAt,
+        statisticsReportedAt: this.record?.statisticsReportedAt,
       }
       if (previous?.lastfm && this.record.enabled) await this.schedule(1)
       await this.save()
@@ -92,7 +97,11 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
   }
 
   view(nonce: string): Promise<AccountView | null> {
-    return this.serial(async () => this.validSession(nonce) ? this.publicView() : null)
+    return this.serial(async () => {
+      if (!this.validSession(nonce)) return null
+      if (!this.statisticsState || Date.now() - (this.record!.statisticsReportedAt ?? 0) >= statisticsRefreshIntervalMs) await this.save()
+      return this.publicView()
+    })
   }
 
   updatePreferences(nonce: string, preferences: MusicPreferences): Promise<void> {
@@ -317,7 +326,20 @@ export class MusicAccount extends DurableObject<ServiceSettings> {
   private oauth(): DiscordOAuthClient { return new DiscordOAuthClient(requireServiceConfiguration(this.env).discord) }
   private readCredentials(): Promise<Credentials> { return this.vault().open(this.record!.credentials, `credentials:${this.record!.userId}`) }
   private async storeCredentials(credentials: Credentials): Promise<void> { this.record!.credentials = await this.vault().seal(credentials, `credentials:${this.record!.userId}`) }
-  private save(): Promise<void> { return this.ctx.storage.put('account', this.record!) }
+  private async save(): Promise<void> {
+    const record = this.record!
+    const registered = record.status !== 'cleanup_pending'
+    const state = JSON.stringify({ registered, lastfmUsername: record.lastfmUsername, sharing: Boolean(record.enabled && this.live && record.track) })
+    const now = Date.now()
+    const shouldReport = state !== this.statisticsState || now - (record.statisticsReportedAt ?? 0) >= statisticsRefreshIntervalMs
+    if (shouldReport) record.statisticsReportedAt = Math.max(now, (record.statisticsReportedAt ?? 0) + 1)
+    await this.ctx.storage.put('account', record)
+    if (!shouldReport) return
+    const report: StatisticsReport = { accountId: this.ctx.id.toString(), observedAt: record.statisticsReportedAt!, registered,
+      lastfmUsername: record.lastfmUsername, sharingUntil: record.enabled && this.live && record.track ? (record.lastCheckedAt ?? 0) + musicObservationLifetimeMs : 0 }
+    try { await communityStatistics(this.env).report(report); this.statisticsState = state }
+    catch { this.statisticsState = undefined; console.warn({ service: 'drmc', event: 'statistics_report_failed' }) }
+  }
   private async schedule(delay: number): Promise<void> {
     this.record!.nextCheckAt = Date.now() + delay
     await this.ctx.storage.setAlarm(this.record!.nextCheckAt)

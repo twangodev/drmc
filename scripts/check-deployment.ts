@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { setTimeout } from 'node:timers/promises'
 import { deploymentOrigin } from './deployment-configuration.ts'
+import { isPlatformStatistics } from '../src/lib/platform-statistics.ts'
 
 const origin = deploymentOrigin(process.env.APP_ORIGIN ?? process.argv[2])
 
@@ -42,6 +43,11 @@ async function verifyDeployment(): Promise<void> {
   const accountStatus = await account.json() as { enabled: boolean; account: unknown }
   assert.equal(accountStatus.account, null, 'Anonymous requests cannot expose linked accounts')
   if (process.env.SERVICE_ENABLED === 'true') assert.equal(accountStatus.enabled, true)
+
+  const statistics = await request('/api/stats')
+  assert.equal(statistics.status, 200, 'Platform statistics are unavailable')
+  assert.equal(statistics.headers.get('Cache-Control'), 'no-store')
+  assert.ok(isPlatformStatistics(await statistics.json()), 'Hosted platform statistics are malformed')
 
   const missingApi = await request('/api/deployment-check-missing')
   assert.equal(missingApi.status, 404, 'Missing API route must return 404')

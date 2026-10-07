@@ -58,6 +58,15 @@ export class LastfmClient {
     if (gatewayObject(response.user)?.name !== session.username) throw new LastfmFailure('authorization_failed')
   }
 
+  async scrobbleCount(username: string): Promise<number> {
+    const response = await this.send(new URLSearchParams({ api_key: this.key, method: 'user.getInfo', user: username, format: 'json' }))
+    const user = gatewayObject(response.user)
+    const count = user?.playcount
+    if (typeof user?.name !== 'string' || user.name.toLowerCase() !== username.toLowerCase()
+      || !/^[0-9]+$/.test(String(count)) || !Number.isSafeInteger(Number(count))) throw new LastfmFailure('invalid_profile_response')
+    return Number(count)
+  }
+
   private async send(parameters: URLSearchParams): Promise<Record<string, unknown>> {
     let response: Response
     try {

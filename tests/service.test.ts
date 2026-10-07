@@ -5,6 +5,7 @@ import { test, type TestContext } from 'node:test'
 import { Miniflare, Response as RuntimeResponse, WebSocketPair, type Request as RuntimeRequest } from 'miniflare'
 import { defaultMusicPreferences, type MusicPreferences } from '../src/lib/music-preferences.ts'
 import type { AccountView } from '../src/lib/account.ts'
+import type { PlatformStatistics } from '../src/lib/platform-statistics.ts'
 
 const origin = 'https://drmc.test'
 const userId = '234567890123456789'
@@ -30,6 +31,7 @@ class Providers {
   refreshed = 0
   revoked = 0
   polls = 0
+  scrobbles = 12345
   lastfmExchanges = 0
   sockets: InstanceType<typeof WebSocketPair>[0][] = []
 
@@ -62,7 +64,7 @@ class Providers {
         assert.equal(parameters.get('token'), 'CallbackToken_Z'.repeat(3))
         return RuntimeResponse.json({ session: { name: this.lastfmUsername, key: 'SessionKey_Z'.repeat(3) } })
       }
-      if (parameters.get('method') === 'user.getInfo') return RuntimeResponse.json(this.lastfmSessionRevoked ? { error: 9 } : { user: { name: this.lastfmUsername } }, { status: this.lastfmSessionRevoked ? 403 : 200 })
+      if (parameters.get('method') === 'user.getInfo') return RuntimeResponse.json(this.lastfmSessionRevoked ? { error: 9 } : { user: { name: this.lastfmUsername, playcount: String(this.scrobbles) } }, { status: this.lastfmSessionRevoked ? 403 : 200 })
       assert.equal(parameters.get('user'), this.lastfmUsername)
       this.polls++
       if (this.lastfmFailure) return RuntimeResponse.json({ error: 29, message: 'PRIVATE PROVIDER ERROR' }, { headers: this.retryAfter ? { 'Retry-After': this.retryAfter } : {} })
@@ -99,9 +101,10 @@ function createRuntime(context: TestContext) {
   const runtime = new Miniflare({ telemetry: { enabled: false }, cf: false, workers: [{ config: {
     name: 'drmc', compatibilityDate: '2026-10-05',
     manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: readFileSync('dist/index.js', 'utf8') } } },
-    exports: { OAuthAttempt: { type: 'durable-object', storage: 'sqlite' }, MusicAccount: { type: 'durable-object', storage: 'sqlite' } },
+    exports: { OAuthAttempt: { type: 'durable-object', storage: 'sqlite' }, MusicAccount: { type: 'durable-object', storage: 'sqlite' }, CommunityStatistics: { type: 'durable-object', storage: 'sqlite' } },
     env: {
       OAUTH_ATTEMPTS: { type: 'durable-object', worker: 'drmc', exportName: 'OAuthAttempt' }, MUSIC_ACCOUNTS: { type: 'durable-object', worker: 'drmc', exportName: 'MusicAccount' },
+      COMMUNITY_STATISTICS: { type: 'durable-object', worker: 'drmc', exportName: 'CommunityStatistics' },
       ...Object.fromEntries(Object.entries({ APP_ORIGIN: origin, SERVICE_ENABLED: 'true', DISCORD_CLIENT_ID: applicationId, DISCORD_CLIENT_SECRET: 'test-secret', LASTFM_API_KEY: apiKey, LASTFM_API_SECRET: 'e'.repeat(32), TOKEN_ENCRYPTION_KEY: encryptionKey }).map(([name, value]) => [name, { type: 'text', value }])),
     },
   }, dev: { outboundService: { type: 'fetcher', handler: (request: RuntimeRequest) => providers.respond(request) } } }] })
@@ -148,6 +151,11 @@ async function account(runtime: Miniflare, session: string[]) {
   assert.equal(response.headers.get('Cache-Control'), 'no-store')
   return await response.json() as { account: AccountView | null }
 }
+async function statistics(runtime: Miniflare): Promise<PlatformStatistics> {
+  const response = await runtime.dispatchFetch(`${origin}/api/stats`)
+  assert.equal(response.status, 200)
+  return response.json() as Promise<PlatformStatistics>
+}
 async function eventually(condition: () => boolean | Promise<boolean>, timeout = 6000) {
   const deadline = Date.now() + timeout
   while (!await condition()) { assert.ok(Date.now() < deadline, 'Account lifecycle did not reach expected state'); await delay(50) }
@@ -156,6 +164,7 @@ async function eventually(condition: () => boolean | Promise<boolean>, timeout =
 test('accounts link, publish from an alarm, pause, resume, logout without stopping music, and disconnect', async context => {
   const { runtime, providers } = createRuntime(context)
   const signedIn = await signIn(runtime)
+  assert.equal((await statistics(runtime)).members, 1)
   assert.equal((await account(runtime, signedIn.cookies)).account!.status, 'link_lastfm')
   await linkLastfm(runtime, signedIn.cookies)
   await eventually(() => providers.activity !== null)
@@ -170,23 +179,29 @@ test('accounts link, publish from an alarm, pause, resume, logout without stoppi
   assert.equal(presence.activityObservedAt, undefined)
   assert.equal(presence.dispatches[0]!.event, 'READY')
   assert.equal((await account(runtime, signedIn.cookies)).account!.lastfmUsername, 'twangodev')
+  await eventually(async () => (await statistics(runtime)).scrobbles === providers.scrobbles)
+  assert.equal((await statistics(runtime)).sharingNow, 1)
   const publicResponse = JSON.stringify(await account(runtime, signedIn.cookies))
   assert.equal(/access-token|refresh-token|credentials|session|PRIVATE/.test(publicResponse), false)
   await post(runtime, '/api/account/pause', signedIn.cookies)
   await eventually(() => providers.activity === null)
   assert.equal((await account(runtime, signedIn.cookies)).account!.status, 'paused')
+  assert.equal((await statistics(runtime)).sharingNow, 0)
   await post(runtime, '/api/account/resume', signedIn.cookies)
   await eventually(() => providers.activity !== null)
   assert.equal(providers.connections, 2)
   await post(runtime, '/api/account/logout', signedIn.cookies)
   assert.equal((await account(runtime, signedIn.cookies)).account, null)
   assert.notEqual(providers.activity, null)
+  assert.equal((await statistics(runtime)).members, 1)
+  assert.equal((await statistics(runtime)).sharingNow, 1)
   const relogin = await signIn(runtime)
   await eventually(() => providers.activity !== null)
   await post(runtime, '/api/account/disconnect', relogin.cookies)
   assert.equal(providers.revoked, 1)
   assert.equal((await account(runtime, relogin.cookies)).account, null)
   await eventually(() => providers.activity === null)
+  assert.deepEqual({ ...await statistics(runtime), sampledAt: 0 }, { members: 0, sharingNow: 0, lastfmAccounts: 0, scrobbles: 0, scrobblesUpdatedAt: null, sampledAt: 0 })
 })
 
 test('browser authorization rejects cross-site mutations, state replay, altered cookies, and cross-provider callbacks', async context => {

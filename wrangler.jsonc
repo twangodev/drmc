@@ -16,12 +16,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "OAUTH_ATTEMPTS", "class_name": "OAuthAttempt" },
-      { "name": "MUSIC_ACCOUNTS", "class_name": "MusicAccount" }
+      { "name": "MUSIC_ACCOUNTS", "class_name": "MusicAccount" },
+      { "name": "COMMUNITY_STATISTICS", "class_name": "CommunityStatistics" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["OAuthAttempt"] },
-    { "tag": "v2", "new_sqlite_classes": ["MusicAccount"] }
+    { "tag": "v2", "new_sqlite_classes": ["MusicAccount"] },
+    { "tag": "v3", "new_sqlite_classes": ["CommunityStatistics"] }
   ],
   "vars": {
     "APP_ORIGIN": "http://localhost:8787",
