@@ -157,6 +157,7 @@ test('activity preview shows loved tracks, elapsed time and profile controls wit
   await expect(page.getByText('Listening to Kid A', { exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: 'Kid A', exact: true })).toBeVisible()
   await expect.poll(() => page.getByRole('img', { name: 'Kid A', exact: true }).evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  await page.evaluate(() => document.fonts.ready)
   await expect(page.getByText(/1:0\d elapsed/)).toBeVisible()
   await expect(page.getByRole('link', { name: 'Last.fm profile' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'View track' })).toHaveAttribute('href', 'https://www.last.fm/music/Radiohead/_/Kid%20A')
