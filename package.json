@@ -1,7 +1,7 @@
 {
   "name": "drmc",
   "version": "1.0.0",
-  "description": "Cloudflare-hosted Last.fm to Discord music presence",
+  "description": "Discord Rich Music Connector",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
@@ -14,7 +14,6 @@
     "build:worker": "wrangler deploy --dry-run --outdir=dist",
     "build:release": "bun run build:app && bun run build:worker && node scripts/stamp-release.ts",
     "check": "tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.tools.json && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "audit:discord": "node scripts/audit-discord-api.ts",
     "build": "bun run check && bun run build:app && bun run build:worker",
     "test": "bun run build && bun run test:worker",
     "test:worker": "node --test tests/*.test.ts",
@@ -22,7 +21,6 @@
     "deploy": "node scripts/deploy.ts",
     "check:deployment": "node scripts/check-deployment.ts"
   },
-  "dependencies": {},
   "devDependencies": {
     "@number-flow/svelte": "^0.4.2",
     "@playwright/test": "^1.63.0",
