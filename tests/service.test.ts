@@ -335,7 +335,7 @@ test('saved CLI preferences change live activities, preserve elapsed time, and p
   const session = await signIn(runtime)
   assert.deepEqual((await account(runtime, session.cookies)).account!.preferences, defaultMusicPreferences)
   providers.loved = true
-  const preferences = { ...defaultMusicPreferences, refreshInterval: 1, showLoved: true, showProfile: false, showCovers: false, showElapsed: false, keepStatus: true, debug: true }
+  const preferences: MusicPreferences = { ...defaultMusicPreferences, statusDisplay: 'artist', refreshInterval: 1, showLoved: true, showProfile: false, showCovers: false, showElapsed: false, keepStatus: true, debug: true }
   await savePreferences(runtime, session.cookies, preferences)
   await linkLastfm(runtime, session.cookies)
   await eventually(() => providers.activity !== null)
@@ -344,6 +344,7 @@ test('saved CLI preferences change live activities, preserve elapsed time, and p
   assert.equal(providers.activity!.application_id, applicationId)
   assert.deepEqual(providers.activity!.assets, { small_image: '970173669169053717', small_text: 'DRMC • 1.0.0' })
   assert.equal(providers.activity!.timestamps, undefined)
+  assert.equal(providers.activity!.name, 'Radiohead')
   assert.equal(providers.artworkRequests, 0)
   const firstObservation = (await account(runtime, session.cookies)).account!.track!.startedAt
   const timed = { ...preferences, showElapsed: true }
@@ -355,9 +356,14 @@ test('saved CLI preferences change live activities, preserve elapsed time, and p
   await eventually(() => providers.publications.length >= 3)
   assert.equal((providers.publications.at(-1)!.timestamps as { start: number }).start, firstObservation)
   assert.deepEqual((await account(runtime, signedInAgain.cookies)).account!.preferences, timed)
+  const songStatus: MusicPreferences = { ...timed, statusDisplay: 'song' }
+  await savePreferences(runtime, signedInAgain.cookies, songStatus)
+  await eventually(() => providers.activity!.name === 'Kid A')
+  assert.equal((providers.publications.at(-1)!.timestamps as { start: number }).start, firstObservation)
+  assert.deepEqual((await account(runtime, signedInAgain.cookies)).account!.preferences, songStatus)
   assert.equal((await account(runtime, session.cookies)).account, null)
   await post(runtime, '/api/account/pause', signedInAgain.cookies)
-  await savePreferences(runtime, signedInAgain.cookies, { ...timed, showProfile: true })
+  await savePreferences(runtime, signedInAgain.cookies, { ...songStatus, showProfile: true })
   const paused = (await account(runtime, signedInAgain.cookies)).account!
   assert.equal(paused.status, 'paused')
   assert.equal(paused.nextCheckAt, undefined)

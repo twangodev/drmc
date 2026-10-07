@@ -15,7 +15,7 @@
 
   $effect(() => {
     const current = JSON.stringify(preferences)
-    if (current !== saved) { draft = { ...preferences }; saved = current }
+    if (current !== saved) { draft = { ...defaultMusicPreferences, ...preferences }; saved = current }
   })
 </script>
 
@@ -24,6 +24,14 @@
   <h2 id="preferences-title" class="mt-2 font-medium">Presence preferences</h2>
   <form method="post" action="/api/account/preferences" class="mt-5">
     <div class="space-y-5">
+      <div>
+        <label for="listening-status" class="block text-sm">Listening status</label>
+        <p id="listening-status-hint" class="mt-1 text-xs leading-relaxed text-muted">Choose what follows “Listening to” on Discord.</p>
+        <select id="listening-status" name="statusDisplay" bind:value={draft.statusDisplay} aria-describedby="listening-status-hint" class="mt-3 min-h-10 w-full rounded-md border border-subtle bg-bg px-3 text-sm">
+          <option value="song">Song title</option>
+          <option value="artist">Artist</option>
+        </select>
+      </div>
       {#each controls as control}
         <label class="flex cursor-pointer items-start justify-between gap-5">
           <span><span class="block text-sm">{control.label}</span><span class="mt-1 block text-xs leading-relaxed text-muted">{control.detail}</span></span>

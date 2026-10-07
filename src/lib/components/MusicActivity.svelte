@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Heart, Music2 } from '@lucide/svelte'
-  import { lastfmProfileUrl, lastfmTrackUrl, type ListeningTrack } from '$lib/music'
+  import { lastfmProfileUrl, lastfmTrackUrl, listeningActivityName, type ListeningTrack } from '$lib/music'
   import { defaultMusicPreferences, type MusicPreferences } from '$lib/music-preferences'
 
   let { track, username, preferences = defaultMusicPreferences }: { track: ListeningTrack | null; username: string; preferences?: Readonly<MusicPreferences> } = $props()
@@ -15,7 +15,7 @@
 </script>
 
 <div class="mt-6 border-t border-subtle pt-5" aria-label="Discord activity preview">
-  <p class="eyebrow break-words">{track ? `Listening to ${track.title}` : 'Playing Last.fm'}</p>
+  <p class="eyebrow break-words">{track ? `Listening to ${listeningActivityName(track, preferences.statusDisplay)}` : 'Playing Last.fm'}</p>
   <div class="mt-3 flex items-start gap-4">
     {#if preferences.showCovers || !track}
       <div class="relative size-20 shrink-0 rounded-md bg-raised">

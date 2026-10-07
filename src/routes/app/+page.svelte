@@ -28,7 +28,7 @@
     invalid_authorization_state: 'That authorization link expired or has already been used. Please start again.',
     sign_in_required: 'Sign in with Discord before connecting Last.fm.',
     discord_cleanup_pending: 'Music sharing has stopped. We are still retrying the removal of your Discord authorization.',
-    invalid_music_preferences: 'Choose a whole-number refresh interval between 1 and 3,600 seconds and try again.',
+    invalid_music_preferences: 'Choose Song title or Artist and a whole-number refresh interval between 1 and 3,600 seconds, then try again.',
     service_unavailable: 'Your changes could not be saved. Please try again.',
   }
   const authorizationError = $derived(browser ? errors[page.url.searchParams.get('error') ?? ''] : undefined)

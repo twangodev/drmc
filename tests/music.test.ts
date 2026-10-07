@@ -9,9 +9,11 @@ const track: ListeningTrack = { title: 'Everything In Its Right Place', artist: 
 const images = { logo: '970027358432161832', heart: '970173669169053717' }
 
 test('CLI defaults and native form preferences preserve every presence control', () => {
-  assert.deepEqual(defaultMusicPreferences, { refreshInterval: 10, showProfile: true, showLoved: false, showCovers: true, showElapsed: true, keepStatus: false, debug: false })
+  assert.deepEqual(defaultMusicPreferences, { refreshInterval: 10, statusDisplay: 'song', showProfile: true, showLoved: false, showCovers: true, showElapsed: true, keepStatus: false, debug: false })
   const preferences = readMusicPreferences(new URLSearchParams({ refreshInterval: '30', showLoved: 'on', keepStatus: 'on', debug: 'on' }))
-  assert.deepEqual(preferences, { refreshInterval: 30, showProfile: false, showLoved: true, showCovers: false, showElapsed: false, keepStatus: true, debug: true })
+  assert.deepEqual(preferences, { refreshInterval: 30, statusDisplay: 'song', showProfile: false, showLoved: true, showCovers: false, showElapsed: false, keepStatus: true, debug: true })
+  assert.equal(readMusicPreferences(new URLSearchParams({ refreshInterval: '10', statusDisplay: 'artist' })).statusDisplay, 'artist')
+  for (const statusDisplay of ['', 'album', 'ARTIST']) assert.throws(() => readMusicPreferences(new URLSearchParams({ refreshInterval: '10', statusDisplay })), /invalid_music_preferences/)
   for (const interval of ['', '0', '-1', '1.5', 'NaN', '3601', '99999']) assert.throws(() => readMusicPreferences(new URLSearchParams({ refreshInterval: interval })), /invalid_music_preferences/)
   assert.throws(() => readMusicPreferences(new URLSearchParams({ refreshInterval: '10', showLoved: 'false' })), /invalid_music_preferences/)
   for (const interval of ['1', '3600']) assert.equal(readMusicPreferences(new URLSearchParams({ refreshInterval: interval })).refreshInterval, Number(interval))
@@ -28,6 +30,9 @@ test('the Listening activity has the CLI profile and track buttons, album cover,
   assert.deepEqual(customized.assets, { small_image: images.heart, small_text: 'DRMC • 1.0.0' })
   assert.equal(customized.timestamps, undefined)
   assert.equal(musicActivity({ ...track, loved: false }, 'twangodev', { ...defaultMusicPreferences, showLoved: true }, images)!.assets!.small_image, images.logo)
+  const artistStatus = musicActivity(track, 'twangodev', { ...defaultMusicPreferences, statusDisplay: 'artist' }, images)!
+  assert.equal(artistStatus.name, track.artist)
+  assert.equal(artistStatus.details, track.title)
 })
 
 test('album art is independent of registered badges and missing covers fall back to the logo', () => {

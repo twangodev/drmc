@@ -1,3 +1,5 @@
+import type { ListeningStatusDisplay } from './music-preferences.ts'
+
 export interface ListeningTrack {
   title: string
   artist: string
@@ -9,6 +11,10 @@ export interface ListeningTrack {
 }
 
 export const musicObservationLifetimeMs = 120_000
+
+export function listeningActivityName(track: Pick<ListeningTrack, 'title' | 'artist'>, display: ListeningStatusDisplay): string {
+  return display === 'artist' ? track.artist : track.title
+}
 
 export function lastfmProfileUrl(username: string): string {
   return `https://www.last.fm/user/${encodeURIComponent(username)}`

@@ -161,19 +161,22 @@ test('presence preferences submit all CLI controls with the native browser origi
     expect(route.request().method()).toBe('POST')
     expect(route.request().headers().origin).toBe('http://localhost:8787')
     const preferences = Object.fromEntries(new URLSearchParams(route.request().postData()!))
-    expect(preferences).toEqual({ refreshInterval: '30', showLoved: 'on', keepStatus: 'on', debug: 'on' })
+    expect(preferences).toEqual({ refreshInterval: '30', statusDisplay: 'artist', showLoved: 'on', keepStatus: 'on', debug: 'on' })
     await route.fulfill({ contentType: 'text/html', body: '<h1>Preferences received</h1>' })
   })
   await page.goto('/app')
   await expect(page.getByLabel('Show profile button')).toBeChecked()
   await expect(page.getByLabel('Show loved-track heart')).not.toBeChecked()
   await expect(page.getByLabel('Refresh interval (seconds)')).toHaveValue('10')
+  await expect(page.getByLabel('Listening status', { exact: true })).toHaveValue('song')
+  await page.getByLabel('Listening status', { exact: true }).selectOption('artist')
   for (const label of ['Show profile button', 'Show album covers', 'Show elapsed time']) await page.getByLabel(label).uncheck()
   for (const label of ['Show loved-track heart', 'Keep status when idle', 'Show sync diagnostics']) await page.getByLabel(label).check()
   await page.getByLabel('Refresh interval (seconds)').fill('30')
   await page.clock.runFor(10_000)
   await expect.poll(() => refreshes).toBeGreaterThan(1)
   await expect(page.getByLabel('Refresh interval (seconds)')).toHaveValue('30')
+  await expect(page.getByLabel('Listening status', { exact: true })).toHaveValue('artist')
   await expect(page.getByLabel('Show loved-track heart')).toBeChecked()
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
   await page.getByRole('button', { name: 'Save preferences' }).click()
@@ -198,6 +201,9 @@ test('activity preview shows loved tracks, elapsed time and profile controls wit
   await expect(page.getByRole('heading', { name: 'Sync diagnostics' })).toBeVisible()
   await expect(page.getByRole('list', { name: 'Recent sync events' })).toContainText('Activity sent')
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+  account.preferences = { ...account.preferences, statusDisplay: 'artist' }
+  await page.reload()
+  await expect(page.getByText('Listening to Radiohead', { exact: true })).toBeVisible()
   account.status = 'idle'
   account.track = null
   account.preferences = { ...account.preferences, keepStatus: true }
