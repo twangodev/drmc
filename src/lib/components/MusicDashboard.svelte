@@ -8,6 +8,7 @@
   import AccountNotice from './AccountNotice.svelte'
   import MusicPreferences from './MusicPreferences.svelte'
   import MusicSharing from './MusicSharing.svelte'
+  import PlatformStats from './PlatformStats.svelte'
   import SignIn from './SignIn.svelte'
   import SyncDiagnostics from './SyncDiagnostics.svelte'
   import Button from './ui/Button.svelte'
@@ -62,4 +63,5 @@
     <SignIn />
   {/if}
   <noscript><p class="mt-6 text-center text-xs text-muted">Enable JavaScript to manage your music after signing in.</p></noscript>
+  <PlatformStats />
 </div>

@@ -6,6 +6,14 @@ including polling and the Discord connection after your browser closes.
 Preferences and account controls live under **Settings**. The operator probe
 remains available at `/probe`.
 
+The public `/api/stats` endpoint reports registered members, fresh music sharing,
+and combined lifetime Last.fm scrobbles. The UI refreshes every 30 seconds;
+Last.fm totals refresh every five minutes, including for paused members. Duplicate
+Last.fm profiles count once, unknown totals remain unavailable, and disconnecting
+removes an account from the totals. Account IDs and usernames stay private.
+Existing accounts enroll on their next sync or authenticated visit; older paused
+accounts appear when their owners next open DRMC.
+
 ## Development
 
 Use Bun 1.4+ and Node.js 24+.

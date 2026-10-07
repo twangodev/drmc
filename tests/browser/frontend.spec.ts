@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { defaultMusicPreferences } from '../../src/lib/music-preferences'
 import type { AccountView } from '../../src/lib/account'
+import type { PlatformStatistics } from '../../src/lib/platform-statistics'
 
 test('minimal sign-in works on narrow screens without JavaScript', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 320, height: 740 } })
@@ -234,4 +235,44 @@ test('activity preview shows loved tracks, elapsed time and profile controls wit
   await page.reload()
   await expect(page.getByText('Playing Last.fm')).toBeVisible()
   await expect(page.getByRole('link', { name: 'View track' })).toHaveCount(0)
+})
+
+test('platform statistics refresh without a login, distinguish unknown totals, and retain the last sample during failures', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 740 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.clock.install()
+  const statistics: PlatformStatistics = { members: 42, sharingNow: 2, lastfmAccounts: 40, scrobbles: null, scrobblesUpdatedAt: null, sampledAt: Date.now() }
+  let failure = false
+  let malformed = false
+  await page.route('**/api/account', route => route.fulfill({ status: 401, json: { enabled: true, account: null } }))
+  await page.route('**/api/stats', route => route.fulfill({ status: failure ? 503 : 200, json: failure || malformed ? { error: 'statistics_unavailable' } : statistics }))
+  await page.goto('/')
+  const region = page.getByRole('region', { name: 'Platform statistics' })
+  const counters = region.getByRole('definition')
+  const expectCounts = async (values: string[]) => {
+    await expect(counters).toHaveCount(values.length)
+    for (const [index, value] of values.entries()) await expect(counters.nth(index).locator('.sr-only')).toHaveText(value)
+  }
+  await expectCounts(['42', '2', 'Not yet available'])
+  await expect(region.getByText('Updating Last.fm totals…')).toBeVisible()
+  statistics.members = 43
+  statistics.sharingNow = 1
+  statistics.scrobbles = 12345
+  statistics.scrobblesUpdatedAt = Date.now()
+  await page.clock.runFor(30_000)
+  await expectCounts(['43', '1', '12,345'])
+  await expect(region.locator('dd').last()).toHaveAttribute('title', '12,345')
+  await expect.poll(() => region.locator('number-flow-svelte').first().evaluate(element => element.shadowRoot?.getAnimations().filter(animation => animation.playState === 'running').length ?? 0)).toBe(0)
+  statistics.sampledAt = statistics.scrobblesUpdatedAt + 7 * 60_000
+  await page.clock.runFor(30_000)
+  await expect(region.getByText('Last.fm totals are waiting for an update.')).toBeVisible()
+  for (const mode of ['failure', 'malformed']) {
+    failure = mode === 'failure'
+    malformed = mode === 'malformed'
+    await page.clock.runFor(30_000)
+    await expect(region.getByText('Statistics temporarily unavailable.')).toBeVisible()
+    await expectCounts(['43', '1', '12,345'])
+  }
+  await expect(page.getByRole('button', { name: 'Log in with Discord' })).toBeEnabled()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
 })
