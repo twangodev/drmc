@@ -15,7 +15,7 @@
 </script>
 
 <div class="mt-6 border-t border-subtle pt-5" aria-label="Discord activity preview">
-  <p class="eyebrow">{track ? 'Listening to Last.fm' : 'Playing Last.fm'}</p>
+  <p class="eyebrow break-words">{track ? `Listening to ${track.title}` : 'Playing Last.fm'}</p>
   <div class="mt-3 flex items-start gap-4">
     {#if preferences.showCovers || !track}
       <div class="relative size-20 shrink-0 rounded-md bg-raised">

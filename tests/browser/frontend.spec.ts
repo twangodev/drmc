@@ -191,6 +191,7 @@ test('activity preview shows loved tracks, elapsed time and profile controls wit
   await page.goto('/app?saved=preferences')
   await expect(page.getByRole('status').filter({ hasText: 'Preferences saved.' })).toBeVisible()
   await expect(page.getByText('Loved on Last.fm', { exact: true })).toBeVisible()
+  await expect(page.getByText('Listening to Kid A', { exact: true })).toBeVisible()
   await expect(page.getByText(/1:0\d elapsed/)).toBeVisible()
   await expect(page.getByRole('link', { name: 'Visit last.fm Profile' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'View scrobble on Last.fm' })).toHaveAttribute('href', 'https://www.last.fm/music/Radiohead/_/Kid%20A')

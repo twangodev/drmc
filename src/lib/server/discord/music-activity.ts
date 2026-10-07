@@ -13,7 +13,7 @@ export function musicActivity(track: ListeningTrack | null, username: string, pr
   const cover = track.artwork ?? images.logo
   const badge = preferences.showLoved && track.loved ? images.heart ?? images.logo : images.logo
   return {
-    name: 'Last.fm', type: 2, details: track.title, state: `by ${track.artist}`.slice(0, 128),
+    name: track.title, type: 2, details: track.title, state: `by ${track.artist}`.slice(0, 128),
     ...(preferences.showElapsed && track.startedAt ? { timestamps: { start: track.startedAt } } : {}),
     assets: {
       ...(preferences.showCovers && cover ? { large_image: cover, large_text: track.album || track.title } : {}),

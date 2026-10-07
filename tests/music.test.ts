@@ -19,7 +19,7 @@ test('CLI defaults and native form preferences preserve every presence control',
 
 test('the Listening activity has the CLI profile and track buttons, album cover, badge, and elapsed time', () => {
   assert.deepEqual(musicActivity(track, 'twangodev', { ...defaultMusicPreferences }, images), {
-    name: 'Last.fm', type: 2, details: track.title, state: 'by Radiohead', timestamps: { start: track.startedAt },
+    name: track.title, type: 2, details: track.title, state: 'by Radiohead', timestamps: { start: track.startedAt },
     assets: { large_image: track.artwork, large_text: 'Kid A', small_image: images.logo, small_text: 'DRMC • 1.0.0' },
     buttons: [{ label: 'Visit last.fm Profile', url: 'https://www.last.fm/user/twangodev' }, { label: 'View scrobble on Last.fm', url: 'https://www.last.fm/music/Radiohead/_/Everything%20In%20Its%20Right%20Place' }],
   })

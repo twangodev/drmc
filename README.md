@@ -97,7 +97,7 @@ paused account.
 | `--rm-time` | Turn off Show elapsed time |
 | `--keep-status` | Keep status when idle, off by default |
 | `--debug`, `-d` | Show sync diagnostics and the latest 20 sanitized events |
-| Listening activity | Track title, artist, album artwork, and Last.fm badge |
+| Listening activity | Listening to the song title, artist, album artwork, and Last.fm badge |
 | Track button | View scrobble on Last.fm, alongside the optional profile button |
 | Reconnection | Automatic recovery with stable elapsed time and bounded backoff |
 

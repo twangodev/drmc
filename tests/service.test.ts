@@ -162,6 +162,7 @@ test('accounts link, publish from an alarm, pause, resume, logout without stoppi
   assert.equal(providers.activity!.details, 'Kid A')
   assert.equal(providers.activity!.state, 'by Radiohead')
   assert.equal((providers.activity!.assets as { large_image: string }).large_image, proxyImage(providers.artworkUrl!))
+  assert.equal(providers.activity!.name, 'Kid A')
   assert.equal(providers.artworkRequests, 1)
   const presence = (await account(runtime, signedIn.cookies)).account!.presence!
   assert.ok(presence.connectedAt)
