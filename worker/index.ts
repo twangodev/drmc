@@ -1,10 +1,7 @@
 import { CloudflareAuthorizationAttempts, type OAuthAttempt } from './cloudflare/oauth-attempt'
-import { handleProbeRequest } from '../src/lib/server/probe/handler'
 import type { ServiceSettings } from '../src/lib/server/accounts/configuration'
 import { handleServiceRequest } from './application'
 import type { MusicAccount } from './cloudflare/music-account'
-import { DiscordGatewayPresence } from '../src/lib/server/discord/gateway'
-import { connectDiscordGateway } from './cloudflare/discord-gateway'
 import type { StatisticsSettings } from './cloudflare/community-statistics'
 import { handleStatisticsRequest } from './statistics'
 
@@ -27,12 +24,16 @@ export default {
     if (path.startsWith('/auth/') || path.startsWith('/api/account')) {
       return handleServiceRequest(request, env, { attempts: new CloudflareAuthorizationAttempts(env.OAUTH_ATTEMPTS), accounts: env.MUSIC_ACCOUNTS })
     }
-    if (!['/health', '/probe/start', '/probe/callback'].includes(path) && !path.startsWith('/api/')) {
-      return env.ASSETS.fetch(request)
+    if (path === '/health' || path.startsWith('/api/')) {
+      const response = path === '/health' && request.method === 'GET'
+        ? Response.json({ status: 'ok' })
+        : Response.json({ error: 'not_found' }, { status: 404 })
+      response.headers.set('Cache-Control', 'no-store')
+      response.headers.set('Referrer-Policy', 'no-referrer')
+      response.headers.set('X-Content-Type-Options', 'nosniff')
+      response.headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+      return Promise.resolve(response)
     }
-    return handleProbeRequest(request, env, {
-      attempts: new CloudflareAuthorizationAttempts(env.OAUTH_ATTEMPTS),
-      presence: new DiscordGatewayPresence(connectDiscordGateway),
-    })
+    return env.ASSETS.fetch(request)
   },
 } satisfies ExportedHandler<Env>

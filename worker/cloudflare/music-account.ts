@@ -267,7 +267,7 @@ export class MusicAccount extends DurableObject<StatisticsSettings> {
 
   private async ensurePresence(accessToken: string): Promise<void> {
     if (this.live) return
-    const live = await openDiscordPresence(connectDiscordGateway, { applicationId: this.env.DISCORD_CLIENT_ID!, userId: this.record!.userId, accessToken }, event => console.info({ service: 'drmc', ...event }))
+    const live = await openDiscordPresence(connectDiscordGateway, { applicationId: this.env.DISCORD_CLIENT_ID!, userId: this.record!.userId, accessToken }, { observe: event => console.info({ service: 'drmc', ...event }) })
     this.live = live
     this.published = undefined
     this.observe('connected')

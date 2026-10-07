@@ -1,9 +1,6 @@
 APP_ORIGIN=http://localhost:8787
-PROBE_ENABLED=false
-PROBE_ALLOWED_DISCORD_IDS=your_test_account_id
 DISCORD_CLIENT_ID=your_application_id
 DISCORD_CLIENT_SECRET=your_application_client_secret
-PROBE_ACCESS_KEY=replace_with_a_random_secret_at_least_32_characters_long
 SERVICE_ENABLED=true
 LASTFM_API_KEY=your_lastfm_api_key
 LASTFM_API_SECRET=your_lastfm_shared_secret

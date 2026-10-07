@@ -4,12 +4,6 @@
   X-Frame-Options: DENY
   Content-Security-Policy: frame-ancestors 'none'
 
-/probe
-  Cache-Control: no-store
-
-/probe.html
-  Cache-Control: no-store
-
 /release.json
   Cache-Control: no-store
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
-import { DiscordGatewayFailure, DiscordGatewayPresence, type GatewayConnection } from '../src/lib/server/discord/gateway.ts'
+import { test, type TestContext } from 'node:test'
+import { DiscordGatewayFailure, openDiscordPresence, type GatewayConnection } from '../src/lib/server/discord/gateway.ts'
 import { updateGatewayPresence } from '../src/lib/server/discord/gateway-protocol.ts'
 
 const authorization = {
@@ -69,18 +69,27 @@ class GatewayFixture implements GatewayConnection {
   get listenerCount(): number { return this.messages.size + this.closes.size + this.errors.size }
 }
 
-function publisher(socket: GatewayFixture) {
-  return new DiscordGatewayPresence(async () => socket, { holdMs: 30, handshakeTimeoutMs: 20, heartbeatJitter: () => 0 })
+const musicActivity = { name: 'Last.fm', type: 2 as const, details: 'Kid A', state: 'by Radiohead' }
+
+async function openSession(context: TestContext, socket: GatewayFixture) {
+  const session = await openDiscordPresence(async () => socket, authorization, { handshakeTimeoutMs: 20, heartbeatJitter: () => 0 })
+  context.after(() => session.close())
+  return session
 }
 
-test('the OAuth Gateway identifies, holds a Listening activity, heartbeats, clears, and closes', async () => {
+function presenceFrames(socket: GatewayFixture) {
+  return socket.frames.filter(frame => frame.op === 3)
+}
+
+test('the OAuth Gateway identifies, publishes music, heartbeats, clears, and closes', async context => {
   const socket = new GatewayFixture()
-  const report = await publisher(socket).testPresence(authorization)
-  assert.equal(report.connected, true)
-  assert.equal(report.heartbeatAcknowledged, true)
-  assert.equal(report.activitySent, true)
-  assert.equal(report.clearSent, true)
-  assert.equal(report.failure, undefined)
+  const session = await openSession(context, socket)
+  assert.equal(presenceFrames(socket).length, 0)
+  session.update(musicActivity)
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.ok(session.diagnostics().lastHeartbeatAcknowledgedAt)
+  session.close()
+  assert.deepEqual(await session.closed, {})
   assert.deepEqual(socket.frames[0], {
     op: 2,
     d: {
@@ -88,47 +97,44 @@ test('the OAuth Gateway identifies, holds a Listening activity, heartbeats, clea
       properties: { os: 'linux', browser: 'drmc', device: authorization.applicationId },
     },
   })
-  const presence = socket.frames.filter(frame => frame.op === 3)
-  assert.deepEqual(presence, [
-    { op: 3, d: { since: 0, status: 'online', afk: false, activities: [{ name: 'DRMC test', type: 2, details: 'Cloudflare presence test', state: 'Testing Discord OAuth presence' }] } },
-    { op: 3, d: { since: 0, status: 'online', afk: false, activities: [] } },
+  assert.deepEqual(presenceFrames(socket), [
+    updateGatewayPresence(musicActivity, authorization.applicationId),
+    updateGatewayPresence(null),
   ])
   assert.ok(socket.frames.some(frame => frame.op === 1 && frame.d === 7))
   assert.deepEqual(socket.closeCodes, [1000])
   assert.equal(socket.listenerCount, 0)
-  assert.equal(JSON.stringify(report).includes('private'), false)
+  assert.throws(() => session.update(musicActivity), /gateway_closed/)
 })
 
-test('the Gateway account must match the inspected OAuth user before publishing', async () => {
+test('the Gateway account must match the inspected OAuth user before publishing', async context => {
   const socket = new GatewayFixture()
   socket.readyUserId = '345678901234567890'
-  const report = await publisher(socket).testPresence(authorization)
-  assert.deepEqual(report.failure, { reason: 'gateway_account_mismatch' })
-  assert.equal(report.activitySent, false)
-  assert.equal(socket.frames.some(frame => frame.op === 3), false)
+  await assert.rejects(openSession(context, socket), { diagnostic: { reason: 'gateway_account_mismatch' } })
+  assert.equal(presenceFrames(socket).length, 0)
   assert.equal(socket.listenerCount, 0)
 })
 
-test('missing HELLO and missing READY both time out and close without publishing', async () => {
+test('missing HELLO and missing READY both time out and close without publishing', async context => {
   for (const stage of ['hello', 'ready']) {
     const socket = new GatewayFixture()
     if (stage === 'hello') socket.hello = null
     else socket.sendReady = false
-    const report = await publisher(socket).testPresence(authorization)
-    assert.deepEqual(report.failure, { reason: 'handshake_timeout' })
-    assert.equal(report.activitySent, false)
+    await assert.rejects(openSession(context, socket), { diagnostic: { reason: 'handshake_timeout' } })
+    assert.equal(presenceFrames(socket).length, 0)
     assert.deepEqual(socket.closeCodes, [1000])
     assert.equal(socket.listenerCount, 0)
   }
 })
 
-test('a missed heartbeat acknowledgement ends the probe and attempts to clear activity', async () => {
+test('a missed heartbeat acknowledgement closes the session and attempts to clear activity', async context => {
   const socket = new GatewayFixture()
   socket.acknowledgeHeartbeat = false
-  const report = await publisher(socket).testPresence(authorization)
-  assert.deepEqual(report.failure, { reason: 'heartbeat_timeout' })
-  assert.equal(report.clearSent, true)
-  assert.equal(report.heartbeatAcknowledged, false)
+  const session = await openSession(context, socket)
+  session.update(musicActivity)
+  assert.deepEqual(await session.closed, { failure: { reason: 'heartbeat_timeout' } })
+  assert.deepEqual(presenceFrames(socket).at(-1), updateGatewayPresence(null))
+  assert.equal(session.diagnostics().lastHeartbeatAcknowledgedAt, undefined)
   assert.equal(socket.frames.filter(frame => frame.op === 1).length, 1)
 })
 
@@ -136,102 +142,92 @@ for (const [frame, reason] of [
   [{ op: 7 }, 'reconnect_requested'],
   [{ op: 9, d: false }, 'invalid_session'],
 ] as const) {
-  test(`${reason} ends the bounded probe without reusing the token in a reconnect loop`, async () => {
+  test(`${reason} closes the session without reusing the token in a reconnect loop`, async context => {
     const socket = new GatewayFixture()
+    const session = await openSession(context, socket)
     socket.onActivity = () => queueMicrotask(() => socket.emit(frame))
-    const report = await publisher(socket).testPresence(authorization)
-    assert.deepEqual(report.failure, { reason })
-    assert.equal(report.clearSent, true)
+    session.update(musicActivity)
+    assert.deepEqual(await session.closed, { failure: { reason } })
+    assert.deepEqual(presenceFrames(socket).at(-1), updateGatewayPresence(null))
     assert.equal(socket.frames.filter(frame => frame.op === 2).length, 1)
   })
 }
 
 for (const message of ['PRIVATE NON-JSON FRAME', new Uint8Array([1]), JSON.stringify({ op: 'private-provider-token' })]) {
-  test('malformed Gateway frames fail without returning the raw provider payload', async () => {
+  test('malformed Gateway frames fail without returning the raw provider payload', async context => {
     const socket = new GatewayFixture()
+    const session = await openSession(context, socket)
     socket.onActivity = () => queueMicrotask(() => socket.emitRaw(message))
-    const report = await publisher(socket).testPresence(authorization)
-    assert.deepEqual(report.failure, { reason: 'invalid_frame' })
-    assert.equal(JSON.stringify(report).includes('PRIVATE'), false)
-    assert.equal(JSON.stringify(report).includes('private-provider-token'), false)
+    session.update(musicActivity)
+    assert.deepEqual(await session.closed, { failure: { reason: 'invalid_frame' } })
     assert.equal(socket.listenerCount, 0)
   })
 }
 
-test('invalid HELLO intervals fail before any authentication frame is sent', async () => {
+test('invalid HELLO intervals fail before any authentication frame is sent', async context => {
   for (const interval of [0, -1, 'private', 120_001]) {
     const socket = new GatewayFixture()
     socket.hello = { op: 10, d: { heartbeat_interval: interval } }
-    const report = await publisher(socket).testPresence(authorization)
-    assert.deepEqual(report.failure, { reason: 'invalid_hello' })
+    await assert.rejects(openSession(context, socket), { diagnostic: { reason: 'invalid_hello' } })
     assert.deepEqual(socket.frames, [])
   }
 })
 
-test('server-requested heartbeats use the latest dispatch sequence', async () => {
+test('server-requested heartbeats use the latest dispatch sequence', async context => {
   const socket = new GatewayFixture()
-  socket.onActivity = () => queueMicrotask(() => {
-    socket.emit({ op: 0, t: 'USER_UPDATE', s: 8, d: {} })
-    socket.emit({ op: 1, d: null })
-  })
-  const report = await publisher(socket).testPresence(authorization)
-  assert.equal(report.failure, undefined)
+  const session = await openSession(context, socket)
+  socket.emit({ op: 0, t: 'USER_UPDATE', s: 8, d: {} })
+  socket.emit({ op: 1, d: null })
   assert.ok(socket.frames.some(frame => frame.op === 1 && frame.d === 8))
 })
 
-test('Gateway authentication close codes are returned without any close reason or token', async () => {
+test('Gateway authentication close codes are returned without a close reason or token', async context => {
   const socket = new GatewayFixture()
   socket.sendReady = false
-  const run = publisher(socket).testPresence(authorization)
+  const opened = openSession(context, socket)
   queueMicrotask(() => socket.disconnect(4004))
-  const report = await run
-  assert.deepEqual(report.failure, { reason: 'gateway_closed', closeCode: 4004 })
-  assert.equal(report.activitySent, false)
+  await assert.rejects(opened, { diagnostic: { reason: 'gateway_closed', closeCode: 4004 } })
+  assert.equal(presenceFrames(socket).length, 0)
 })
 
-test('a failed clear remains visible and the connection still closes', async () => {
+test('a failed clear remains visible and the connection still closes', async context => {
   const socket = new GatewayFixture()
+  const session = await openSession(context, socket)
+  session.update(musicActivity)
   socket.failClear = true
-  const report = await publisher(socket).testPresence(authorization)
-  assert.equal(report.activitySent, true)
-  assert.equal(report.clearSent, false)
-  assert.deepEqual(report.failure, { reason: 'network_error' })
+  session.close()
+  assert.deepEqual(await session.closed, { failure: { reason: 'network_error' } })
   assert.deepEqual(socket.closeCodes, [1000])
-  assert.equal(JSON.stringify(report).includes('PRIVATE SOCKET'), false)
+  assert.equal(presenceFrames(socket).length, 1)
 })
 
-test('a disconnected socket cannot claim an activity clear was sent', async () => {
+test('a disconnected socket cannot claim an activity clear was sent', async context => {
   const socket = new GatewayFixture()
-  socket.onActivity = () => queueMicrotask(() => socket.disconnect(1006))
-  const report = await publisher(socket).testPresence(authorization)
-  assert.equal(report.activitySent, true)
-  assert.equal(report.clearSent, false)
-  assert.deepEqual(report.failure, { reason: 'gateway_closed', closeCode: 1006 })
-  assert.equal(socket.frames.filter(frame => frame.op === 3).length, 1)
+  const session = await openSession(context, socket)
+  session.update(musicActivity)
+  socket.disconnect(1006)
+  assert.deepEqual(await session.closed, { failure: { reason: 'gateway_closed', closeCode: 1006 } })
+  assert.equal(presenceFrames(socket).length, 1)
 })
 
-test('upgrade failures are sanitized before they reach the probe report', async () => {
-  const rejected = new DiscordGatewayPresence(async () => { throw new DiscordGatewayFailure({ reason: 'upgrade_failed', status: 429 }) })
-  assert.deepEqual((await rejected.testPresence(authorization)).failure, { reason: 'upgrade_failed', status: 429 })
-  const network = new DiscordGatewayPresence(async () => { throw new Error('private-token-in-error') })
-  assert.deepEqual((await network.testPresence(authorization)).failure, { reason: 'network_error' })
+test('upgrade failures are sanitized before they reach the account', async () => {
+  await assert.rejects(openDiscordPresence(async () => { throw new DiscordGatewayFailure({ reason: 'upgrade_failed', status: 429 }) }, authorization), { diagnostic: { reason: 'upgrade_failed', status: 429 } })
+  await assert.rejects(openDiscordPresence(async () => { throw new Error('private-token-in-error') }, authorization), { diagnostic: { reason: 'network_error' } })
 })
 
-test('a persistent OAuth session accepts track changes and explicit idle clears', async () => {
-  const { openDiscordPresence } = await import('../src/lib/server/discord/gateway.ts')
+test('a persistent OAuth session accepts track changes and explicit idle clears', async context => {
   const socket = new GatewayFixture()
-  const session = await openDiscordPresence(async () => socket, authorization)
-  assert.equal(socket.frames.some(frame => frame.op === 3), false)
-  session.update({ name: 'Last.fm', type: 2, details: 'Kid A', state: 'by Radiohead', timestamps: { start: 1234 } })
-  assert.equal((socket.frames.find(frame => frame.op === 3)!.d as { activities: { application_id: string }[] }).activities[0]!.application_id, authorization.applicationId)
-  await new Promise(resolve => setTimeout(resolve, 30))
-  assert.ok(session.diagnostics().lastHeartbeatAcknowledgedAt)
-  assert.ok(session.diagnostics().lastActivitySentAt)
+  const session = await openSession(context, socket)
+  session.update({ ...musicActivity, timestamps: { start: 1234 } })
+  session.update({ ...musicActivity, details: 'Morning Bell', timestamps: { start: 5678 } })
   assert.equal(session.diagnostics().activityObservedAt, undefined)
   session.update(null)
   session.close()
-  const report = await session.closed
-  assert.equal(report.heartbeatAcknowledged, true)
-  assert.equal(report.clearSent, true)
+  assert.deepEqual(await session.closed, {})
+  assert.deepEqual(presenceFrames(socket).slice(0, 3), [
+    updateGatewayPresence({ ...musicActivity, timestamps: { start: 1234 } }, authorization.applicationId),
+    updateGatewayPresence({ ...musicActivity, details: 'Morning Bell', timestamps: { start: 5678 } }, authorization.applicationId),
+    updateGatewayPresence(null),
+  ])
   assert.equal(socket.listenerCount, 0)
 })

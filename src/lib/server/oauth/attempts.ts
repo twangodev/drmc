@@ -3,7 +3,6 @@ export const authorizationLifetimeMs = 10 * 60 * 1000
 export interface AuthorizationAttempt {
   browserBindingHash: string
   expiresAt: number
-  experiment?: 'presence'
   purpose?: 'discord_link' | 'lastfm_link'
   userId?: string
   session?: string

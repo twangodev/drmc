@@ -2,7 +2,7 @@
   import { page } from '$app/state'
 </script>
 
-<svelte:head><title>{page.status} · DRMC</title></svelte:head>
+<svelte:head><title>{page.status} · drmc</title></svelte:head>
 <div class="page-width py-20">
   <p class="eyebrow">{page.status}</p>
   <h1 class="mt-4 text-4xl font-semibold tracking-tight">{page.status === 404 ? 'Nothing playing here.' : 'Something went wrong.'}</h1>

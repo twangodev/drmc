@@ -20,22 +20,15 @@ async function verifyDeployment(): Promise<void> {
     assert.deepEqual(await release.json(), { revision: process.env.GITHUB_SHA }, 'Hosted source revision does not match the workflow')
   }
 
-  for (const path of ['/', '/probe', '/app']) {
+  for (const path of ['/', '/app']) {
     const response = await request(path)
     assert.equal(response.status, 200, `${path} is unavailable`)
     assert.match(response.headers.get('Content-Type') ?? '', /text\/html/)
     const referrerPolicies = response.headers.get('Referrer-Policy')?.split(',').map(policy => policy.trim())
     assert.equal(referrerPolicies?.at(-1), 'same-origin')
     assert.equal(response.headers.get('X-Frame-Options'), 'DENY')
-    assert.match(await response.text(), /DRMC/)
+    assert.match(await response.text(), /drmc/)
   }
-
-  const readiness = await request('/api/probe')
-  assert.equal(readiness.status, 200, 'Probe readiness is unavailable')
-  assert.equal(readiness.headers.get('Cache-Control'), 'no-store')
-  const status = await readiness.json() as { state?: string; publication?: string }
-  assert.ok(['disabled', 'ready'].includes(status.state ?? ''), 'Hosted probe configuration is incomplete')
-  assert.equal(status.publication, 'not_tested')
 
   const account = await request('/api/account')
   assert.ok([200, 401].includes(account.status), 'Account API is unavailable')
@@ -53,12 +46,7 @@ async function verifyDeployment(): Promise<void> {
   assert.equal(missingApi.status, 404, 'Missing API route must return 404')
   assert.deepEqual(await missingApi.json(), { error: 'not_found' })
 
-  const rejectedStart = await request('/probe/start', {
-    method: 'POST', headers: { Origin: origin }, body: new URLSearchParams({ access_key: 'deployment-check-invalid-key' }),
-  })
-  assert.equal(rejectedStart.status, status.state === 'disabled' ? 404 : 403, 'Unauthorized probe start must fail')
-  assert.deepEqual(await rejectedStart.json(), { error: status.state === 'disabled' ? 'probe_disabled' : 'invalid_access_key' })
-  console.log(`Verified ${origin}: pages, API routing, source revision, and ${status.state} probe`)
+  console.log(`Verified ${origin}: pages, account API, platform statistics, and source revision`)
 }
 
 let lastFailure: unknown

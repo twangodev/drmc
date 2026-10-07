@@ -17,7 +17,7 @@ const temporaryDirectory = mkdtempSync(join(tmpdir(), 'drmc-deploy-'))
 try {
   const arguments_ = [
     'node_modules/wrangler/bin/wrangler.js', 'deploy', 'dist/index.js', '--no-bundle',
-    '--tag', release.revision.slice(0, 12), '--message', `DRMC ${release.revision}`,
+    '--tag', release.revision.slice(0, 12), '--message', `drmc ${release.revision}`,
     ...Object.entries(configuration.variables).flatMap(([name, value]) => ['--var', `${name}:${value}`]),
   ]
   if (Object.keys(configuration.secrets).length) {

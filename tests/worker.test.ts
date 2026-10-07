@@ -1,667 +1,81 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test, type TestContext } from 'node:test'
-import { Miniflare, Response as MiniflareResponse, WebSocketPair, type Request as MiniflareRequest } from 'miniflare'
+import { Miniflare } from 'miniflare'
+import type { AuthorizationAttempt } from '../src/lib/server/oauth/attempts.ts'
 
 const origin = 'https://drmc.test'
-const applicationId = '123456789012345678'
-const allowedUserId = '234567890123456789'
-const accessKey = 'operator-access-key-for-test-only-123456'
-const grantedScopes = ['identify', 'openid', 'activities.write', 'sdk.social_layer_presence']
 
-class DiscordFixture {
-  exchangeStatus = 200
-  refreshStatus = 200
-  revokeStatus = 200
-  revokeError = 'private-provider-error'
-  redirectRevoke = false
-  userId = allowedUserId
-  application = applicationId
-  redirectExchange = false
-  malformedTokenStage: 'exchange' | 'refresh' | null = null
-  requests: string[] = []
-  revokeRateLimits: { body: Record<string, unknown> | string; headers?: Record<string, string> }[] = []
-  revocationsAt: number[] = []
-  gatewayStatus = 101
-  gatewayUserId = allowedUserId
-  scopes = grantedScopes
-
-  async respond(request: MiniflareRequest): Promise<MiniflareResponse> {
-    const url = new URL(request.url)
-    if (url.origin === 'https://gateway.discord.gg') return this.gateway(request)
-    assert.equal(url.origin, 'https://discord.com')
-    assert.equal(request.headers.get('User-Agent'), 'DiscordBot (https://github.com/twangodev/drmc, 1.0.0)')
-    if (url.pathname === '/api/v10/oauth2/@me') {
-      this.requests.push('inspect')
-      assert.match(request.headers.get('Authorization') ?? '', /^Bearer (initial|refreshed)-access-token$/)
-      return MiniflareResponse.json({
-        application: { id: this.application },
-        scopes: this.scopes,
-        expires: '2026-10-20T00:00:00Z',
-        user: { id: this.userId },
-      })
-    }
-
-    assert.equal(request.method, 'POST')
-    assert.equal(request.headers.get('Content-Type'), 'application/x-www-form-urlencoded;charset=UTF-8')
-    const parameters = new URLSearchParams(await request.text())
-    if (url.pathname === '/api/v10/oauth2/token/revoke') {
-      this.requests.push('revoke')
-      this.revocationsAt.push(Date.now())
-      assert.equal(request.headers.get('Authorization'), `Basic ${btoa(`${applicationId}:test-client-secret`)}`)
-      assert.equal(parameters.get('client_id'), null)
-      assert.equal(parameters.get('client_secret'), null)
-      assert.match(parameters.get('token') ?? '', /^(initial|refreshed)-refresh-token$/)
-      assert.equal(parameters.get('token_type_hint'), null)
-      const rateLimit = this.revokeRateLimits.shift()
-      if (rateLimit) {
-        const init = { status: 429, headers: rateLimit.headers }
-        return typeof rateLimit.body === 'string'
-          ? new MiniflareResponse(rateLimit.body, init)
-          : MiniflareResponse.json(rateLimit.body, init)
-      }
-      if (this.redirectRevoke) {
-        return new MiniflareResponse(null, { status: 302, headers: { Location: 'https://unexpected.test' } })
-      }
-      if (this.revokeStatus >= 400) {
-        return MiniflareResponse.json({ error: this.revokeError, error_description: 'PRIVATE REVOCATION DESCRIPTION', token: 'private-provider-token' }, { status: this.revokeStatus })
-      }
-      return new MiniflareResponse(null, { status: this.revokeStatus })
-    }
-
-    assert.equal(url.pathname, '/api/oauth2/token')
-    assert.equal(parameters.get('client_id'), applicationId)
-    assert.equal(parameters.get('client_secret'), 'test-client-secret')
-    const refreshing = parameters.get('grant_type') === 'refresh_token'
-    this.requests.push(refreshing ? 'refresh' : 'exchange')
-    if (refreshing) {
-      assert.equal(parameters.get('refresh_token'), 'initial-refresh-token')
-    } else {
-      assert.equal(parameters.get('code'), 'test-code')
-      assert.equal(parameters.get('redirect_uri'), `${origin}/probe/callback`)
-    }
-    if (this.redirectExchange && !refreshing) {
-      return new MiniflareResponse(null, { status: 302, headers: { Location: 'https://unexpected.test' } })
-    }
-    const status = refreshing ? this.refreshStatus : this.exchangeStatus
-    if (status !== 200) {
-      return MiniflareResponse.json({ error: 'invalid_scope', error_description: 'DO NOT EXPOSE PROVIDER BODY' }, { status })
-    }
-    const prefix = refreshing ? 'refreshed' : 'initial'
-    return MiniflareResponse.json({
-      access_token: `${prefix}-access-token`,
-      refresh_token: `${prefix}-refresh-token`,
-      token_type: this.malformedTokenStage === (refreshing ? 'refresh' : 'exchange') ? 'unexpected' : 'Bearer',
-      expires_in: 604800,
-      scope: grantedScopes.join(' '),
-    })
-  }
-
-  private gateway(request: MiniflareRequest): MiniflareResponse {
-    this.requests.push('gateway')
-    assert.equal(request.url, 'https://gateway.discord.gg/?v=10&encoding=json')
-    assert.equal(request.headers.get('Upgrade'), 'websocket')
-    assert.equal(request.headers.get('Authorization'), null)
-    if (this.gatewayStatus !== 101) return new MiniflareResponse('PRIVATE UPGRADE BODY', { status: this.gatewayStatus })
-    const [client, server] = Object.values(new WebSocketPair())
-    server.accept()
-    server.addEventListener('message', event => {
-      const frame = JSON.parse(event.data as string) as { op: number; d: Record<string, unknown> }
-      if (frame.op === 2) {
-        this.requests.push('identify')
-        assert.equal(frame.d.token, 'Bearer refreshed-access-token')
-        assert.equal(frame.d.intents, 0)
-        assert.equal((frame.d.properties as Record<string, unknown>).device, applicationId)
-        server.send(JSON.stringify({ op: 0, t: 'READY', s: 1, d: { user: { id: this.gatewayUserId } } }))
-      } else if (frame.op === 1) {
-        server.send(JSON.stringify({ op: 11, d: null }))
-      } else if (frame.op === 3) {
-        const activities = frame.d.activities as Record<string, unknown>[]
-        this.requests.push(activities.length ? 'publish' : 'clear')
-        if (activities.length) {
-          assert.equal(activities[0]!.type, 2)
-          assert.equal(activities[0]!.details, 'Cloudflare presence test')
-        }
-      } else assert.fail(`Unexpected Gateway opcode ${frame.op}`)
-    })
-    server.send(JSON.stringify({ op: 10, d: { heartbeat_interval: 1000 } }))
-    return new MiniflareResponse(null, { status: 101, webSocket: client })
-  }
-}
-
-function createRuntime(context: TestContext, discord = new DiscordFixture(), overrides: Record<string, string> = {}) {
+function createRuntime(context: TestContext) {
   const runtime = new Miniflare({
-    telemetry: { enabled: false },
-    cf: false,
-    workers: [{
-      config: {
-        name: 'drmc',
-        compatibilityDate: '2026-10-05',
-        assets: {
-          directory: new URL('../build/', import.meta.url).pathname,
-          hasUserWorker: true,
-          runWorkerFirst: ['/api/*', '/health', '/probe/start', '/probe/callback'],
-          notFoundHandling: '404-page',
-        },
-        manifest: {
-          mainModule: 'index.js',
-          modules: { 'index.js': { type: 'esm', contents: readFileSync(new URL('../dist/index.js', import.meta.url), 'utf8') } },
-        },
-        exports: { OAuthAttempt: { type: 'durable-object', storage: 'sqlite' } },
-        env: {
-          ASSETS: { type: 'assets' },
-          OAUTH_ATTEMPTS: { type: 'durable-object', worker: 'drmc', exportName: 'OAuthAttempt' },
-          ...Object.fromEntries(Object.entries({
-            APP_ORIGIN: origin,
-            PROBE_ENABLED: 'true',
-            PROBE_ALLOWED_DISCORD_IDS: allowedUserId,
-            DISCORD_CLIENT_ID: applicationId,
-            DISCORD_CLIENT_SECRET: 'test-client-secret',
-            PROBE_ACCESS_KEY: accessKey,
-            ...overrides,
-          }).map(([name, value]) => [name, { type: 'text', value }])),
-        },
-      },
-      dev: { outboundService: { type: 'fetcher', handler: (request: MiniflareRequest) => discord.respond(request) } },
-    }],
+    telemetry: { enabled: false }, cf: false,
+    workers: [{ config: {
+      name: 'drmc', compatibilityDate: '2026-10-05',
+      assets: { directory: new URL('../build/', import.meta.url).pathname, hasUserWorker: true, runWorkerFirst: ['/api/*', '/auth/*', '/health'], notFoundHandling: '404-page' },
+      manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: readFileSync(new URL('../dist/index.js', import.meta.url), 'utf8') } } },
+      exports: { OAuthAttempt: { type: 'durable-object', storage: 'sqlite' } },
+      env: { ASSETS: { type: 'assets' }, OAUTH_ATTEMPTS: { type: 'durable-object', worker: 'drmc', exportName: 'OAuthAttempt' } },
+    } }],
   })
   context.after(() => runtime.dispose())
-  return { runtime, discord }
+  return runtime
 }
 
-async function beginProbe(runtime: Miniflare, experiment?: 'presence') {
-  const response = await runtime.dispatchFetch(`${origin}/probe/start`, {
-    method: 'POST',
-    redirect: 'manual',
-    headers: { Origin: origin },
-    body: new URLSearchParams({ access_key: accessKey, ...(experiment ? { experiment } : {}) }),
-  })
-  assert.equal(response.status, 303)
-  const authorization = new URL(response.headers.get('Location')!)
-  assert.equal(authorization.origin, 'https://discord.com')
-  assert.equal(authorization.searchParams.get('redirect_uri'), `${origin}/probe/callback`)
-  assert.equal(authorization.searchParams.get('scope'), 'identify openid sdk.social_layer_presence')
-  const state = authorization.searchParams.get('state')!
-  assert.match(state, /^[a-f0-9]{64}$/)
-  const setCookie = response.headers.get('Set-Cookie')!
-  assert.match(setCookie, /HttpOnly; SameSite=Lax; Max-Age=600; Secure/)
-  return { state, cookie: setCookie.split(';')[0]! }
-}
-
-function callback(runtime: Miniflare, attempt: { state: string; cookie: string }, parameters: Record<string, string> = { code: 'test-code' }) {
-  const query = new URLSearchParams({ state: attempt.state, ...parameters })
-  return runtime.dispatchFetch(`${origin}/probe/callback?${query}`, { headers: { Cookie: attempt.cookie } })
-}
-
-test('the disabled probe reports health without accepting OAuth attempts', async context => {
-  const { runtime, discord } = createRuntime(context, undefined, { PROBE_ENABLED: 'false' })
+test('health works without provider credentials and unknown API routes return uncached JSON', async context => {
+  const runtime = createRuntime(context)
   const health = await runtime.dispatchFetch(`${origin}/health`)
+  assert.equal(health.status, 200)
   assert.deepEqual(await health.json(), { status: 'ok' })
-  const start = await runtime.dispatchFetch(`${origin}/probe/start`, { method: 'POST' })
-  assert.equal(start.status, 404)
-  assert.deepEqual(await start.json(), { error: 'probe_disabled' })
-  assert.deepEqual(discord.requests, [])
-})
-
-test('public probe status exposes readiness without operator secrets or account IDs', async context => {
-  for (const [overrides, expected] of [
-    [{ PROBE_ENABLED: 'false' }, 'disabled'],
-    [{ PROBE_ALLOWED_DISCORD_IDS: '' }, 'unconfigured'],
-    [{}, 'ready'],
-  ] as const) {
-    const { runtime } = createRuntime(context, undefined, overrides)
-    const response = await runtime.dispatchFetch(`${origin}/api/probe`)
-    assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), { state: expected, publication: 'not_tested' })
-    assert.equal(response.headers.get('Cache-Control'), 'no-store')
+  assert.equal(health.headers.get('Cache-Control'), 'no-store')
+  for (const path of ['/api/missing', '/api/probe']) {
+    const missing = await runtime.dispatchFetch(`${origin}${path}`)
+    assert.equal(missing.status, 404)
+    assert.deepEqual(await missing.json(), { error: 'not_found' })
+    assert.equal(missing.headers.get('Cache-Control'), 'no-store')
   }
 })
 
-test('prerendered pages serve through assets while callback and API routes stay protected', async context => {
-  const { runtime, discord } = createRuntime(context)
-  for (const path of ['/', '/probe']) {
+test('prerendered pages preserve security headers and removed probe routes return 404', async context => {
+  const runtime = createRuntime(context)
+  for (const path of ['/', '/app']) {
     const response = await runtime.dispatchFetch(`${origin}${path}`)
     assert.equal(response.status, 200)
     assert.match(response.headers.get('Content-Type')!, /text\/html/)
     const html = await response.text()
-    assert.match(html, /DRMC/)
+    assert.match(html, /drmc/)
     assert.match(html, /content-security-policy/i)
-    assert.equal(html.includes(accessKey), false)
     assert.equal(response.headers.get('Referrer-Policy'), 'same-origin')
     assert.equal(response.headers.get('X-Frame-Options'), 'DENY')
   }
-  const callbackResponse = await runtime.dispatchFetch(`${origin}/probe/callback`)
-  assert.equal(callbackResponse.status, 400)
-  assert.deepEqual(await callbackResponse.json(), { error: 'invalid_authorization_state' })
-  const missingApi = await runtime.dispatchFetch(`${origin}/api/missing`)
-  assert.equal(missingApi.status, 404)
-  assert.deepEqual(await missingApi.json(), { error: 'not_found' })
-  assert.deepEqual(discord.requests, [])
-})
-
-test('configuration fails closed for empty allowlists and insecure production origins', async context => {
-  const configurations: Record<string, string>[] = [{ PROBE_ALLOWED_DISCORD_IDS: '' }, { APP_ORIGIN: 'http://drmc.test' }]
-  for (const overrides of configurations) {
-    const { runtime } = createRuntime(context, undefined, overrides)
-    const response = await runtime.dispatchFetch(`${origin}/probe/start`, { method: 'POST' })
-    assert.equal(response.status, 503)
-    const body = await response.json() as { error: string; fields: string[] }
-    assert.equal(body.error, 'probe_not_configured')
-    assert.ok(body.fields.includes(Object.keys(overrides)[0]!))
-    assert.equal(JSON.stringify(body).includes('test-client-secret'), false)
+  for (const path of ['/probe', '/probe/start', '/probe/callback']) {
+    assert.equal((await runtime.dispatchFetch(`${origin}${path}`)).status, 404)
   }
 })
 
-test('authorization start rejects foreign origins and wrong operator keys', async context => {
-  const { runtime, discord } = createRuntime(context)
-  for (const [requestOrigin, key] of [['https://attacker.test', accessKey], [origin, 'wrong-key']]) {
-    const response = await runtime.dispatchFetch(`${origin}/probe/start`, {
-      method: 'POST', headers: { Origin: requestOrigin! },
-      body: new URLSearchParams({ access_key: key! }),
-    })
-    assert.equal(response.status, 403)
-  }
-  assert.deepEqual(discord.requests, [])
-})
-
-test('oversized operator form is rejected before authorization', async context => {
-  const { runtime } = createRuntime(context)
-  const response = await runtime.dispatchFetch(`${origin}/probe/start`, {
-    method: 'POST', headers: { Origin: origin },
-    body: new URLSearchParams({ access_key: 'x'.repeat(5000) }),
-  })
-  assert.equal(response.status, 413)
-})
-
-test('successful scope and refresh checks never mark publishing verified or expose credentials', async context => {
-  const { runtime, discord } = createRuntime(context)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 200)
-  const body = await response.json()
-  assert.deepEqual(body, {
-    gate: 'unverified', publication: 'not_tested', oauth: 'verified',
-    requestedScopes: ['identify', 'openid', 'sdk.social_layer_presence'],
-    authorization: {
-      applicationId, userId: allowedUserId, scopes: grantedScopes, expiresAt: '2026-10-20T00:00:00Z',
-    },
-    refreshed: true, cleanup: 'revoked',
-  })
-  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'inspect', 'revoke'])
-  for (const secret of [accessKey, 'test-client-secret', 'access-token', 'refresh-token', 'test-code']) {
-    assert.equal(JSON.stringify(body).includes(secret), false)
-  }
-  assert.equal(response.headers.get('Cache-Control'), 'no-store')
-  assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer')
-  assert.match(response.headers.get('Set-Cookie')!, /Max-Age=0/)
-})
-
-test('an opted-in presence probe upgrades a Worker WebSocket, publishes, clears, then revokes', { timeout: 60_000 }, async context => {
-  const { runtime, discord } = createRuntime(context)
-  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(response.status, 200, JSON.stringify(body))
-  assert.equal(body.oauth, 'verified')
-  assert.equal(body.publication, 'sent')
-  assert.equal(body.gate, 'unverified')
-  assert.equal(body.cleanup, 'revoked')
-  assert.deepEqual(body.gateway, {
-    connected: true, heartbeatAcknowledged: true, activitySent: true, clearSent: true, heldForSeconds: 45,
-  })
-  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'inspect', 'gateway', 'identify', 'publish', 'clear', 'revoke'])
-  for (const secret of ['refreshed-access-token', 'refresh-token', accessKey, 'test-client-secret']) {
-    assert.equal(JSON.stringify(body).includes(secret), false)
-  }
-  assert.equal((await callback(runtime, await beginProbe(runtime), { code: 'test-code', experiment: 'presence' })).status, 200)
-  assert.equal(discord.requests.filter(operation => operation === 'gateway').length, 1)
-})
-
-test('a rejected Gateway upgrade preserves verified OAuth and still revokes the grant', async context => {
-  const discord = new DiscordFixture()
-  discord.gatewayStatus = 429
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(body.oauth, 'verified')
-  assert.equal(body.publication, 'failed')
-  assert.equal(body.cleanup, 'revoked')
-  assert.deepEqual(body.publicationFailure, { reason: 'upgrade_failed', status: 429 })
-  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'inspect', 'gateway', 'revoke'])
-  assert.equal(JSON.stringify(body).includes('PRIVATE UPGRADE'), false)
-})
-
-test('the presence probe verifies the Gateway account before publishing and revokes on mismatch', async context => {
-  const discord = new DiscordFixture()
-  discord.gatewayUserId = '345678901234567890'
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.publicationFailure, { reason: 'gateway_account_mismatch' })
-  assert.equal(body.cleanup, 'revoked')
-  assert.equal(discord.requests.includes('publish'), false)
-})
-
-test('missing presence scope skips the Gateway and revokes the verified OAuth grant', async context => {
-  const discord = new DiscordFixture()
-  discord.scopes = ['identify', 'openid']
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(body.oauth, 'verified')
-  assert.equal(body.publication, 'failed')
-  assert.deepEqual(body.publicationFailure, { reason: 'presence_scope_missing' })
-  assert.equal(body.cleanup, 'revoked')
-  assert.equal(discord.requests.includes('gateway'), false)
-})
-
-test('unlisted accounts never reach the Gateway even when presence is requested', async context => {
-  const discord = new DiscordFixture()
-  discord.userId = '345678901234567890'
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime, 'presence'))
-  assert.equal(response.status, 403)
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(body.cleanup, 'revoked')
-  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'revoke'])
-})
-
-test('unknown experiments fail before an OAuth attempt is created', async context => {
-  const { runtime, discord } = createRuntime(context)
-  const response = await runtime.dispatchFetch(`${origin}/probe/start`, {
-    method: 'POST', headers: { Origin: origin },
-    body: new URLSearchParams({ access_key: accessKey, experiment: 'private-provider-token' }),
-  })
-  assert.equal(response.status, 400)
-  assert.deepEqual(await response.json(), { error: 'invalid_experiment' })
-  assert.deepEqual(discord.requests, [])
-})
-
-test('authorization attempts reject another browser and can only be consumed once', async context => {
-  const { runtime, discord } = createRuntime(context)
-  const attempt = await beginProbe(runtime)
-  const wrongBrowser = await callback(runtime, { ...attempt, cookie: `drmc_probe=${'f'.repeat(64)}` })
-  assert.equal(wrongBrowser.status, 400)
-  assert.deepEqual(discord.requests, [])
-  assert.equal((await callback(runtime, attempt)).status, 200)
-  assert.equal((await callback(runtime, attempt)).status, 400)
-  assert.equal(discord.requests.filter(operation => operation === 'exchange').length, 1)
-})
-
-test('concurrent callbacks cannot exchange the same attempt twice', async context => {
-  const { runtime, discord } = createRuntime(context)
-  const attempt = await beginProbe(runtime)
-  const responses = await Promise.all([callback(runtime, attempt), callback(runtime, attempt)])
-  assert.deepEqual(responses.map(response => response.status).sort(), [200, 400])
-  assert.equal(discord.requests.filter(operation => operation === 'exchange').length, 1)
-})
-
-test('expired durable authorization attempts are rejected before token exchange', async context => {
-  const { runtime, discord } = createRuntime(context)
-  const attempt = await beginProbe(runtime)
+async function attemptStore(runtime: Miniflare, state: string) {
   const namespace = await runtime.getDurableObjectNamespace('OAUTH_ATTEMPTS')
-  const stub = namespace.get(namespace.idFromName(attempt.state)) as unknown as {
-    create(attempt: { browserBindingHash: string; expiresAt: number }): Promise<void>
+  return namespace.get(namespace.idFromName(state)) as unknown as {
+    create(attempt: AuthorizationAttempt): Promise<void>
+    consume(browserBindingHash: string, now: number): Promise<AuthorizationAttempt | null>
   }
-  await stub.create({ browserBindingHash: 'irrelevant', expiresAt: Date.now() - 1 })
-  assert.equal((await callback(runtime, attempt)).status, 400)
-  assert.deepEqual(discord.requests, [])
-})
-
-test('denied consent consumes state without exchanging any code', async context => {
-  const { runtime, discord } = createRuntime(context)
-  const attempt = await beginProbe(runtime)
-  const denied = await callback(runtime, attempt, { error: 'access_denied' })
-  assert.equal(denied.status, 400)
-  assert.deepEqual(await denied.json(), { error: 'authorization_denied', discord_error: 'access_denied' })
-  assert.equal((await callback(runtime, attempt)).status, 400)
-  assert.deepEqual(discord.requests, [])
-})
-
-for (const error of ['invalid_scope', 'invalid_request', 'invalid_client', 'server_error', 'private-unrecognized-provider-value']) {
-  test(`Discord callback error ${error} consumes state and returns only a recognized diagnostic`, async context => {
-    const { runtime, discord } = createRuntime(context)
-    const attempt = await beginProbe(runtime)
-    const response = await callback(runtime, attempt, { error, error_description: 'PRIVATE PROVIDER DESCRIPTION', code: 'private-code' })
-    assert.equal(response.status, 400)
-    assert.deepEqual(await response.json(), {
-      error: 'authorization_failed',
-      discord_error: error === 'private-unrecognized-provider-value' ? 'unknown_error' : error,
-    })
-    assert.equal((await callback(runtime, attempt)).status, 400)
-    assert.deepEqual(discord.requests, [])
-  })
 }
 
-test('unlisted accounts are rejected and their obtained grants revoked', async context => {
-  const discord = new DiscordFixture()
-  discord.userId = '345678901234567890'
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 403)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.failure, { operation: 'admission', reason: 'account_not_allowed', status: null })
-  assert.equal(body.authorization, undefined)
-  assert.equal(body.cleanup, 'revoked')
-  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'revoke'])
+test('durable authorization attempts reject another browser and concurrent consumption succeeds once', async context => {
+  const store = await attemptStore(createRuntime(context), 'one-time-state')
+  const attempt: AuthorizationAttempt = { purpose: 'discord_link', browserBindingHash: 'bound-browser', expiresAt: Date.now() + 60_000 }
+  await store.create(attempt)
+  assert.equal(await store.consume('another-browser', Date.now()), null)
+  const results = await Promise.all([store.consume('bound-browser', Date.now()), store.consume('bound-browser', Date.now())])
+  assert.equal(results.filter(Boolean).length, 1)
+  const consumed = results.find(Boolean)!
+  assert.equal(await consumed.purpose, attempt.purpose)
+  assert.equal(await consumed.browserBindingHash, attempt.browserBindingHash)
+  assert.equal(await consumed.expiresAt, attempt.expiresAt)
+  assert.equal(await store.consume('bound-browser', Date.now()), null)
 })
 
-test('scope rejection is a sanitized diagnostic without any publication attempt', async context => {
-  const discord = new DiscordFixture()
-  discord.exchangeStatus = 400
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.failure, { operation: 'exchange', reason: 'invalid_scope', status: 400 })
-  assert.equal(JSON.stringify(body).includes('DO NOT EXPOSE'), false)
-  assert.equal(body.gate, 'unverified')
-  assert.deepEqual(discord.requests, ['exchange'])
+test('expired durable authorization attempts cannot be consumed', async context => {
+  const store = await attemptStore(createRuntime(context), 'expired-state')
+  await store.create({ purpose: 'lastfm_link', browserBindingHash: 'bound-browser', expiresAt: Date.now() - 1 })
+  assert.equal(await store.consume('bound-browser', Date.now()), null)
 })
-
-test('failed refresh still revokes the initial grant', async context => {
-  const discord = new DiscordFixture()
-  discord.refreshStatus = 400
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(body.oauth, 'failed')
-  assert.equal(body.cleanup, 'revoked')
-  assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'revoke'])
-})
-
-test('revocation failure is visible and cannot report complete cleanup', async context => {
-  const discord = new DiscordFixture()
-  discord.revokeStatus = 503
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(body.cleanup, 'failed')
-  assert.equal(body.gate, 'unverified')
-  assert.equal(body.oauth, 'verified')
-  assert.deepEqual(body.cleanupFailure, { reason: 'upstream_error', status: 503 })
-  assert.equal(JSON.stringify(body).includes('private-provider'), false)
-  assert.equal(JSON.stringify(body).includes('PRIVATE REVOCATION'), false)
-})
-
-test('recognized revocation failures expose only a safe diagnostic', async context => {
-  const discord = new DiscordFixture()
-  discord.revokeStatus = 401
-  discord.revokeError = 'invalid_client'
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.cleanupFailure, { reason: 'invalid_client', status: 401 })
-  assert.equal(JSON.stringify(body).includes('private-provider-token'), false)
-  assert.equal(JSON.stringify(body).includes('PRIVATE REVOCATION'), false)
-  assert.equal(discord.revocationsAt.length, 1)
-})
-
-for (const [name, rateLimit, minimumWait] of [
-  ['header', { headers: { 'Retry-After': '0.02' }, body: {} }, 20],
-  ['body', { body: { retry_after: 0.01 } }, 10],
-  ['conflicting delays', { headers: { 'Retry-After': '0.02' }, body: { retry_after: 0.01 } }, 20],
-] as const) {
-  test(`revocation honors the ${name} wait before one successful retry`, async context => {
-    const discord = new DiscordFixture()
-    discord.revokeRateLimits = [rateLimit]
-    const { runtime } = createRuntime(context, discord)
-    const response = await callback(runtime, await beginProbe(runtime))
-    assert.equal(response.status, 200)
-    const body = await response.json() as Record<string, unknown>
-    assert.equal(body.cleanup, 'revoked')
-    assert.equal(body.cleanupFailure, undefined)
-    assert.equal(discord.revocationsAt.length, 2)
-    assert.ok(discord.revocationsAt[1]! - discord.revocationsAt[0]! >= minimumWait)
-    assert.deepEqual(discord.requests, ['exchange', 'inspect', 'refresh', 'inspect', 'revoke', 'revoke'])
-  })
-}
-
-test('a repeated revocation rate limit stops after one retry and retains the latest wait', async context => {
-  const discord = new DiscordFixture()
-  discord.revokeRateLimits = [
-    { body: { retry_after: 0.001 } },
-    { body: { retry_after: 60, global: false }, headers: { 'X-RateLimit-Scope': 'shared' } },
-  ]
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(body.oauth, 'verified')
-  assert.equal(body.cleanup, 'failed')
-  assert.deepEqual(body.cleanupFailure, {
-    reason: 'rate_limited', status: 429,
-    rateLimit: { responseFormat: 'json', retryAfterSeconds: 60, scope: 'shared', global: false },
-  })
-  assert.equal(discord.revocationsAt.length, 2)
-})
-
-test('long waits are reported without retrying or exposing arbitrary response fields', async context => {
-  const discord = new DiscordFixture()
-  discord.revokeRateLimits = [{
-    headers: { 'Retry-After': '65', 'X-RateLimit-Scope': 'global', 'X-RateLimit-Global': 'true' },
-    body: { retry_after: 64.57, message: 'PRIVATE RATE LIMIT MESSAGE', token: 'private-provider-token' },
-  }]
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.cleanupFailure, {
-    reason: 'rate_limited', status: 429,
-    rateLimit: { responseFormat: 'json', retryAfterSeconds: 65, scope: 'global', global: true },
-  })
-  assert.equal(discord.revocationsAt.length, 1)
-  assert.equal(JSON.stringify(body).includes('PRIVATE RATE LIMIT'), false)
-  assert.equal(JSON.stringify(body).includes('private-provider-token'), false)
-})
-
-test('non-JSON rate limits without a wait are diagnosed without guessing a retry interval', async context => {
-  const discord = new DiscordFixture()
-  discord.revokeRateLimits = [{ body: '<html>PRIVATE UPSTREAM BLOCK</html>' }]
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.cleanupFailure, {
-    reason: 'rate_limited', status: 429, rateLimit: { responseFormat: 'other' },
-  })
-  assert.equal(discord.revocationsAt.length, 1)
-  assert.equal(JSON.stringify(body).includes('PRIVATE UPSTREAM'), false)
-})
-
-for (const retryAfter of [-1, '0.001', null, 'private-provider-token']) {
-  test(`invalid retry delay ${retryAfter} never triggers a request or leaks metadata`, async context => {
-    const discord = new DiscordFixture()
-    discord.revokeRateLimits = [{
-      headers: { 'Retry-After': '-1', 'X-RateLimit-Scope': 'private-provider-token' },
-      body: { retry_after: retryAfter, global: 'private-provider-token' },
-    }]
-    const { runtime } = createRuntime(context, discord)
-    const response = await callback(runtime, await beginProbe(runtime))
-    assert.equal(response.status, 502)
-    const body = await response.json() as Record<string, unknown>
-    assert.deepEqual(body.cleanupFailure, {
-      reason: 'rate_limited', status: 429, rateLimit: { responseFormat: 'json' },
-    })
-    assert.equal(discord.revocationsAt.length, 1)
-    assert.equal(JSON.stringify(body).includes('private-provider-token'), false)
-  })
-}
-
-test('revocation redirects never forward the grant or client authentication', async context => {
-  const discord = new DiscordFixture()
-  discord.redirectRevoke = true
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.cleanupFailure, { reason: 'upstream_error', status: 302 })
-  assert.equal(discord.requests.filter(operation => operation === 'revoke').length, 1)
-})
-
-test('a revocation with no response body completes cleanup', async context => {
-  const discord = new DiscordFixture()
-  discord.revokeStatus = 204
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 200)
-  const body = await response.json() as Record<string, unknown>
-  assert.equal(body.cleanup, 'revoked')
-  assert.equal(body.cleanupFailure, undefined)
-})
-
-for (const stage of ['exchange', 'refresh'] as const) {
-  test(`failed cleanup after a malformed ${stage} response retains both sanitized failures`, async context => {
-    const discord = new DiscordFixture()
-    discord.malformedTokenStage = stage
-    discord.revokeStatus = 401
-    discord.revokeError = 'invalid_client'
-    const { runtime } = createRuntime(context, discord)
-    const response = await callback(runtime, await beginProbe(runtime))
-    assert.equal(response.status, 502)
-    const body = await response.json() as Record<string, unknown>
-    assert.deepEqual(body.failure, { operation: stage, reason: 'invalid_token_response', status: 200 })
-    assert.equal(body.cleanup, 'failed')
-    assert.deepEqual(body.cleanupFailure, { reason: 'invalid_client', status: 401 })
-    assert.equal(JSON.stringify(body).includes('refresh-token'), false)
-  })
-}
-
-test('authorization from another application fails verification and revokes the grant', async context => {
-  const discord = new DiscordFixture()
-  discord.application = '345678901234567890'
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  const body = await response.json() as Record<string, unknown>
-  assert.deepEqual(body.failure, { operation: 'inspect', reason: 'invalid_authorization', status: 200 })
-  assert.equal(body.cleanup, 'revoked')
-})
-
-test('Discord redirects are rejected rather than forwarding application credentials', async context => {
-  const discord = new DiscordFixture()
-  discord.redirectExchange = true
-  const { runtime } = createRuntime(context, discord)
-  const response = await callback(runtime, await beginProbe(runtime))
-  assert.equal(response.status, 502)
-  assert.deepEqual(discord.requests, ['exchange'])
-})
-
-for (const stage of ['exchange', 'refresh'] as const) {
-  test(`recognizable tokens in malformed ${stage} responses are revoked`, async context => {
-    const discord = new DiscordFixture()
-    discord.malformedTokenStage = stage
-    const { runtime } = createRuntime(context, discord)
-    const response = await callback(runtime, await beginProbe(runtime))
-    assert.equal(response.status, 502)
-    const body = await response.json() as Record<string, unknown>
-    assert.deepEqual(body.failure, { operation: stage, reason: 'invalid_token_response', status: 200 })
-    assert.equal(body.cleanup, 'revoked')
-    assert.equal(discord.requests.filter(operation => operation === 'revoke').length, 1)
-    assert.equal(JSON.stringify(body).includes('refresh-token'), false)
-  })
-}

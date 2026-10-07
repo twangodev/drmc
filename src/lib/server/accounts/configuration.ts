@@ -1,6 +1,7 @@
-import type { ProbeSettings } from '../probe/configuration'
-
-export interface ServiceSettings extends ProbeSettings {
+export interface ServiceSettings {
+  APP_ORIGIN?: string
+  DISCORD_CLIENT_ID?: string
+  DISCORD_CLIENT_SECRET?: string
   SERVICE_ENABLED?: string
   LASTFM_API_KEY?: string
   LASTFM_API_SECRET?: string

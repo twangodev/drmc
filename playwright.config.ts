@@ -7,7 +7,7 @@ export default defineConfig({
   use: { baseURL: 'http://localhost:8787', trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'wrangler dev --ip 127.0.0.1 --port 8787 --var PROBE_ENABLED:false',
+    command: 'wrangler dev --ip 127.0.0.1 --port 8787',
     url: 'http://localhost:8787/health',
     timeout: 60_000,
     reuseExistingServer: false,

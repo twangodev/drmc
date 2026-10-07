@@ -25,7 +25,7 @@
       </div>
     {/if}
     <div class="min-w-0 text-sm">
-      <p class="font-medium break-words">{track?.title ?? 'DRMC'}</p>
+      <p class="font-medium break-words">{track?.title ?? 'drmc'}</p>
       <p class="mt-1 text-muted break-words">{track ? `by ${track.artist}` : '1.0.0'}</p>
       {#if track?.album}<p class="mt-1 text-xs text-muted break-words">{track.album}</p>{/if}
       {#if track && preferences.showLoved && track.loved}<p class="mt-2 flex items-center gap-1 text-xs text-muted"><Heart size={12} fill="currentColor" aria-hidden="true" />Loved on Last.fm</p>{/if}

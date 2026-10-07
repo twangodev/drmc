@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>Your music · DRMC</title>
+  <title>Your music · drmc</title>
   <meta name="robots" content="noindex" />
 </svelte:head>
 

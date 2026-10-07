@@ -1,5 +1,5 @@
-import { readDiscordOAuthError } from './oauth-errors'
-import { readDiscordRateLimit, revocationRetryDelay, type DiscordRateLimit } from './rate-limits'
+import { readDiscordOAuthError } from './oauth-errors.ts'
+import { readDiscordRateLimit, revocationRetryDelay, type DiscordRateLimit } from './rate-limits.ts'
 
 export const discordPresenceScopes = ['identify', 'openid', 'sdk.social_layer_presence'] as const
 
@@ -34,23 +34,40 @@ type DiscordCleanupResult =
   | { status: 'failed'; failure: DiscordFailureDiagnostic }
 
 export class DiscordOAuthFailure extends Error {
+  readonly operation: DiscordOperation
+  readonly status: number | null
+  readonly reason: string
+  readonly cleanup?: DiscordCleanupResult
+  readonly rateLimit?: DiscordRateLimit
+
   constructor(
-    readonly operation: DiscordOperation,
-    readonly status: number | null,
-    readonly reason: string,
-    readonly cleanup?: DiscordCleanupResult,
-    readonly rateLimit?: DiscordRateLimit,
+    operation: DiscordOperation,
+    status: number | null,
+    reason: string,
+    cleanup?: DiscordCleanupResult,
+    rateLimit?: DiscordRateLimit,
   ) {
     super(`Discord ${operation} failed: ${reason}`)
     this.name = 'DiscordOAuthFailure'
+    this.operation = operation
+    this.status = status
+    this.reason = reason
+    this.cleanup = cleanup
+    this.rateLimit = rateLimit
   }
 }
 
 export class DiscordOAuthClient {
+  private readonly application: DiscordApplication
+  private readonly request: typeof fetch
+
   constructor(
-    private readonly application: DiscordApplication,
-    private readonly request: typeof fetch = fetch.bind(globalThis),
-  ) {}
+    application: DiscordApplication,
+    request: typeof fetch = fetch.bind(globalThis),
+  ) {
+    this.application = application
+    this.request = request
+  }
 
   authorizationUrl(state: string): string {
     const url = new URL('https://discord.com/oauth2/authorize')

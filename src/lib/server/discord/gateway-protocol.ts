@@ -21,15 +21,6 @@
  * THE SOFTWARE.
  */
 
-export const presenceProbeDurationMs = 45_000
-
-export const presenceProbeActivity = {
-  name: 'DRMC test',
-  type: 2,
-  details: 'Cloudflare presence test',
-  state: 'Testing Discord OAuth presence',
-} as const
-
 export function identifyGateway(applicationId: string, accessToken: string) {
   return {
     op: 2,
@@ -52,8 +43,7 @@ export interface DiscordActivity {
   buttons?: { label: string; url: string }[]
 }
 
-export function updateGatewayPresence(active: boolean | DiscordActivity | null, applicationId?: string) {
-  const activity = active === true ? presenceProbeActivity : active === false ? null : active
+export function updateGatewayPresence(activity: DiscordActivity | null, applicationId?: string) {
   return {
     op: 3,
     d: { since: 0, activities: activity ? [gatewayActivity(activity, applicationId)] : [], status: 'online', afk: false },

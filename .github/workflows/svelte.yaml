@@ -146,8 +146,5 @@ jobs:
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
-          PROBE_ENABLED: ${{ vars.PROBE_ENABLED || 'false' }}
           DISCORD_CLIENT_ID: ${{ vars.DISCORD_CLIENT_ID }}
-          PROBE_ALLOWED_DISCORD_IDS: ${{ vars.PROBE_ALLOWED_DISCORD_IDS }}
           DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
-          PROBE_ACCESS_KEY: ${{ secrets.PROBE_ACCESS_KEY }}

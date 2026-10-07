@@ -9,29 +9,12 @@ test('hosted deployment requires a canonical HTTPS origin', () => {
   assert.equal(readDeploymentConfiguration({ APP_ORIGIN: 'https://drmc.test/' }).origin, 'https://drmc.test')
 })
 
-test('first deployment disables the probe without requiring Discord credentials', () => {
+test('a disabled service can deploy without provider credentials', () => {
   assert.deepEqual(readDeploymentConfiguration({ APP_ORIGIN: 'https://drmc.test' }), {
     origin: 'https://drmc.test',
-    variables: { SERVICE_ENABLED: 'false', APP_ORIGIN: 'https://drmc.test', PROBE_ENABLED: 'false', DISCORD_CLIENT_ID: '', PROBE_ALLOWED_DISCORD_IDS: '' },
+    variables: { SERVICE_ENABLED: 'false', APP_ORIGIN: 'https://drmc.test', DISCORD_CLIENT_ID: '' },
     secrets: {},
   })
-  assert.throws(() => readDeploymentConfiguration({ APP_ORIGIN: 'https://drmc.test', PROBE_ENABLED: 'yes' }), /PROBE_ENABLED/)
-})
-
-test('enabling the hosted probe requires its credentials and explicit test-account admission', () => {
-  const settings = {
-    APP_ORIGIN: 'https://drmc.test', PROBE_ENABLED: 'true', DISCORD_CLIENT_ID: '123456789012345678',
-    PROBE_ALLOWED_DISCORD_IDS: '234567890123456789', DISCORD_CLIENT_SECRET: 'test-client-secret',
-    PROBE_ACCESS_KEY: 'test-operator-secret-at-least-32-characters',
-  }
-  const configuration = readDeploymentConfiguration(settings)
-  assert.equal(configuration.variables.PROBE_ENABLED, 'true')
-  assert.equal('DISCORD_CLIENT_SECRET' in configuration.variables, false)
-  assert.equal('PROBE_ACCESS_KEY' in configuration.variables, false)
-  assert.deepEqual(configuration.secrets, { DISCORD_CLIENT_SECRET: settings.DISCORD_CLIENT_SECRET, PROBE_ACCESS_KEY: settings.PROBE_ACCESS_KEY })
-  for (const missing of ['DISCORD_CLIENT_ID', 'PROBE_ALLOWED_DISCORD_IDS', 'DISCORD_CLIENT_SECRET', 'PROBE_ACCESS_KEY'] as const) {
-    assert.throws(() => readDeploymentConfiguration({ ...settings, [missing]: undefined }))
-  }
 })
 
 test('default origin is discovered with the target account and never follows credential-bearing redirects', async () => {
