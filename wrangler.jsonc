@@ -3,9 +3,10 @@
   "name": "drmc",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-05",
-  "workers_dev": true,
+  "workers_dev": false,
+  "preview_urls": false,
   "routes": [
-    { "pattern": "drmc.twango.dev", "custom_domain": true }
+    { "pattern": "drmc.twango.dev", "custom_domain": true, "previews_enabled": false }
   ],
   "assets": {
     "directory": "./build",
