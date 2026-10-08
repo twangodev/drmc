@@ -22,14 +22,17 @@ test('CLI defaults and native form preferences preserve every presence control',
 test('the Listening activity has the CLI profile and track buttons, album cover, badge, and elapsed time', () => {
   assert.deepEqual(musicActivity(track, 'twangodev', { ...defaultMusicPreferences }, images), {
     name: track.title, type: 2, details: track.title, state: 'by Radiohead', timestamps: { start: track.startedAt },
-    assets: { large_image: track.artwork, large_text: 'Kid A', small_image: images.logo, small_text: 'drmc • 1.0.0' },
+    assets: { large_image: track.artwork, large_text: 'Kid A', small_image: images.logo, small_text: 'via drmc' },
     buttons: [{ label: 'Visit last.fm Profile', url: 'https://www.last.fm/user/twangodev' }, { label: 'View scrobble on Last.fm', url: 'https://www.last.fm/music/Radiohead/_/Everything%20In%20Its%20Right%20Place' }],
   })
   const customized = musicActivity(track, 'twangodev', { ...defaultMusicPreferences, showProfile: false, showLoved: true, showCovers: false, showElapsed: false }, images)!
   assert.deepEqual(customized.buttons, [{ label: 'View scrobble on Last.fm', url: lastfmTrackUrl(track) }])
-  assert.deepEqual(customized.assets, { small_image: images.heart, small_text: 'drmc • 1.0.0' })
+  assert.deepEqual(customized.assets, { small_image: images.heart, small_text: 'Loved on Last.fm' })
   assert.equal(customized.timestamps, undefined)
-  assert.equal(musicActivity({ ...track, loved: false }, 'twangodev', { ...defaultMusicPreferences, showLoved: true }, images)!.assets!.small_image, images.logo)
+  const unloved = musicActivity({ ...track, loved: false }, 'twangodev', { ...defaultMusicPreferences, showLoved: true }, images)!
+  assert.equal(unloved.assets!.small_image, images.logo)
+  assert.equal(unloved.assets!.small_text, 'via drmc')
+  assert.equal(musicActivity(track, 'twangodev', { ...defaultMusicPreferences, showLoved: true }, { logo: images.logo })!.assets!.small_text, 'via drmc')
   const artistStatus = musicActivity(track, 'twangodev', { ...defaultMusicPreferences, statusDisplay: 'artist' }, images)!
   assert.equal(artistStatus.name, track.artist)
   assert.equal(artistStatus.details, track.title)
@@ -47,7 +50,7 @@ test('album art is independent of registered badges and missing covers fall back
 test('idle status is opt-in and never carries the last track or an elapsed timer', () => {
   assert.equal(musicActivity(null, 'twangodev', { ...defaultMusicPreferences }, images), null)
   assert.deepEqual(musicActivity(null, 'twangodev', { ...defaultMusicPreferences, keepStatus: true }, images), {
-    name: 'Last.fm', type: 0, details: 'drmc', state: '1.0.0', assets: { large_image: images.logo },
+    name: 'Last.fm', type: 0, details: 'drmc', state: 'Waiting for music', assets: { large_image: images.logo },
   })
 })
 

@@ -26,7 +26,7 @@
     {/if}
     <div class="min-w-0 text-sm">
       <p class="font-medium break-words">{track?.title ?? 'drmc'}</p>
-      <p class="mt-1 text-muted break-words">{track ? `by ${track.artist}` : '1.0.0'}</p>
+      <p class="mt-1 text-muted break-words">{track ? `by ${track.artist}` : 'Waiting for music'}</p>
       {#if track?.album}<p class="mt-1 text-xs text-muted break-words">{track.album}</p>{/if}
       {#if track && preferences.showLoved && track.loved}<p class="mt-2 flex items-center gap-1 text-xs text-muted"><Heart size={12} fill="currentColor" aria-hidden="true" />Loved on Last.fm</p>{/if}
       {#if track?.startedAt && preferences.showElapsed}<p class="mt-2 font-mono text-xs text-muted">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')} elapsed</p>{/if}
